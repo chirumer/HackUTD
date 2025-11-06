@@ -7,7 +7,7 @@ from bankassist.config import get_service_url
 
 app = FastAPI(title="Write Operation Service")
 FRAUD_URL = get_service_url("fraud")
-DB_URL = get_service_url("db")
+DB_URL = get_service_url("database")
 
 
 class TransferRequest(BaseModel):
@@ -64,4 +64,4 @@ def health():
 if __name__ == "__main__":
     import uvicorn
     from bankassist.config import SERVICE_PORTS
-    uvicorn.run(app, host="0.0.0.0", port=SERVICE_PORTS["writeops"])
+    uvicorn.run(app, host="0.0.0.0", port=SERVICE_PORTS["write_ops"])

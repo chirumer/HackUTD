@@ -5,7 +5,7 @@ import requests
 from bankassist.config import get_service_url
 
 app = FastAPI(title="Read Query Service")
-DB_URL = get_service_url("db")
+DB_URL = get_service_url("database")
 
 
 class QueryRequest(BaseModel):

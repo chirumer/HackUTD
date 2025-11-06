@@ -7,13 +7,14 @@ SERVICE_PORTS = {
     "llm": 8004,
     "rag": 8005,
     "fraud": 8006,
-    "db": 8007,
+    "database": 8007,
     "readquery": 8008,
-    "writeops": 8009,
+    "write_ops": 8009,
     "complaint": 8010,
     "qr": 8011,
     "handler": 8012,
     "dashboard": 8013,
+    "dashboard_ui": 8014,
 }
 
 def get_service_url(service_name: str) -> str:

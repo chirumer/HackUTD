@@ -27,6 +27,7 @@ SERVICES = [
     "qr_service.py",
     "handler_service.py",
     "dashboard_service.py",
+    "dashboard_ui_service.py",
 ]
 
 processes = []
@@ -45,7 +46,15 @@ def start_services():
     
     for service_file in SERVICES:
         service_path = services_dir / service_file
+        # Map service file name to config name
         service_name = service_file.replace("_service.py", "")
+        if service_name == "db":
+            service_name = "database"
+        elif service_name == "writeops":
+            service_name = "write_ops"
+        elif service_name == "dashboard_ui":
+            pass  # Keep as is
+        
         port = SERVICE_PORTS.get(service_name)
         
         print(f"Starting {service_name:12} on port {port}...")
@@ -71,10 +80,11 @@ def start_services():
     print(f"✅ Started {len(processes)} services")
     print("\nService endpoints:")
     for name, port, _ in processes:
-        print(f"  {name:12} → http://localhost:{port}")
+        print(f"  {name:15} → http://localhost:{port}")
     
-    print("\n📊 Dashboard: http://localhost:8013/status")
-    print("🎯 Handler:   http://localhost:8012/handle")
+    print("\n🎨 Dashboard UI: http://localhost:8014")
+    print("📊 Stats API:    http://localhost:8013/status")
+    print("🎯 Handler:      http://localhost:8012/handle")
     print("\nPress Ctrl+C to stop all services")
 
 

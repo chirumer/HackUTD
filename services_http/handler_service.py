@@ -3,10 +3,19 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional
 import requests
+import time
 from bankassist.config import get_service_url
 from bankassist.utils.intent import classify_intent
+from bankassist.utils.logger import ServiceLogger
+from bankassist.utils.metrics import MetricsCollector
 
 app = FastAPI(title="Handler Service")
+
+# Initialize logger and metrics
+logger = ServiceLogger("handler")
+metrics = MetricsCollector("handler")
+
+logger.info("Handler service starting up")
 
 # Service URLs
 VOICE_URL = get_service_url("voice")
@@ -15,7 +24,7 @@ CALL_URL = get_service_url("call")
 LLM_URL = get_service_url("llm")
 RAG_URL = get_service_url("rag")
 READQUERY_URL = get_service_url("readquery")
-WRITEOPS_URL = get_service_url("writeops")
+WRITEOPS_URL = get_service_url("write_ops")
 COMPLAINT_URL = get_service_url("complaint")
 QR_URL = get_service_url("qr")
 
@@ -48,9 +57,16 @@ def get_or_create_session(phone: str, account_id: str, verified: bool):
 
 @app.post("/handle", response_model=HandleResponse)
 def handle_text(req: HandleRequest):
+    start_time = time.time()
+    logger.info(f"Handling request from {req.phone}", phone=req.phone, account=req.account_id)
+    metrics.increment("requests_total")
+    
     session = get_or_create_session(req.phone, req.account_id, req.verified)
     text = req.text
     intent = classify_intent(text)
+    
+    logger.info(f"Classified intent: {intent}", intent=intent, text=text[:50])
+    metrics.increment(f"intent_{intent}")
     
     if intent == "general":
         # Call LLM service
@@ -255,9 +271,23 @@ def receive_call(phone: str):
 @app.post("/call/end")
 def end_call(call_id: str, transcript: str = ""):
     """End a call and store transcript."""
+    logger.info(f"Ending call {call_id}", call_id=call_id)
+    metrics.increment("calls_ended")
     resp = requests.post(f"{CALL_URL}/end", json={"call_id": call_id, "transcript": transcript})
     resp.raise_for_status()
     return resp.json()
+
+
+@app.get("/logs")
+def get_logs(limit: int = 100):
+    """Get recent logs from this service."""
+    return logger.get_recent_logs(limit=limit)
+
+
+@app.get("/metrics")
+def get_metrics(period: Optional[int] = None):
+    """Get metrics from this service."""
+    return metrics.get_all_metrics(time_period_minutes=period)
 
 
 if __name__ == "__main__":
