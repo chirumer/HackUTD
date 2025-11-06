@@ -629,46 +629,66 @@ HTML_TEMPLATE = """
         
         // Voice Service Testing - Live Transcription
         async function startRecording() {
+            console.log('startRecording called');
+            
             try {
+                document.getElementById('transcriptOutput').innerHTML = '<em>🔄 Connecting to voice service...</em>';
+                
                 // Connect to voice service WebSocket
+                console.log('Connecting to WebSocket:', VOICE_WS_URL);
                 voiceWs = new WebSocket(VOICE_WS_URL);
                 
                 voiceWs.onopen = async () => {
-                    console.log('Voice WebSocket connected');
-                    document.getElementById('transcriptOutput').innerHTML = '<em>🎙️ Connecting to microphone...</em>';
+                    console.log('✓ Voice WebSocket connected');
+                    document.getElementById('transcriptOutput').innerHTML = '<em>🎙️ Requesting microphone access...</em>';
                     
-                    // Start microphone
-                    const stream = await navigator.mediaDevices.getUserMedia({ 
-                        audio: {
-                            sampleRate: 16000,
-                            channelCount: 1,
-                            echoCancellation: true,
-                            noiseSuppression: true
-                        } 
-                    });
-                    
-                    audioContext = new AudioContext({ sampleRate: 16000 });
-                    const source = audioContext.createMediaStreamSource(stream);
-                    audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-                    
-                    audioProcessor.onaudioprocess = (e) => {
-                        if (voiceWs && voiceWs.readyState === WebSocket.OPEN) {
-                            const inputData = e.inputBuffer.getChannelData(0);
-                            const pcm16 = floatTo16BitPCM(inputData);
-                            voiceWs.send(pcm16);
-                        }
-                    };
-                    
-                    source.connect(audioProcessor);
-                    audioProcessor.connect(audioContext.destination);
-                    
-                    mediaRecorder = { stream, source, audioProcessor };
-                    isRecording = true;
-                    
-                    document.getElementById('startRecording').disabled = true;
-                    document.getElementById('stopRecording').disabled = false;
-                    document.getElementById('recordingIcon').innerHTML = '<span class="recording-dot"></span>';
-                    document.getElementById('transcriptOutput').innerHTML = '<div style="color: #58a6ff;"><strong>🎙️ Recording... Speak now!</strong></div><hr style="margin: 10px 0; border-color: #30363d;">';
+                    try {
+                        // Start microphone
+                        console.log('Requesting microphone access...');
+                        const stream = await navigator.mediaDevices.getUserMedia({ 
+                            audio: {
+                                sampleRate: 16000,
+                                channelCount: 1,
+                                echoCancellation: true,
+                                noiseSuppression: true
+                            } 
+                        });
+                        
+                        console.log('✓ Microphone access granted');
+                        audioContext = new AudioContext({ sampleRate: 16000 });
+                        const source = audioContext.createMediaStreamSource(stream);
+                        audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                        
+                        let chunkCount = 0;
+                        audioProcessor.onaudioprocess = (e) => {
+                            if (voiceWs && voiceWs.readyState === WebSocket.OPEN) {
+                                const inputData = e.inputBuffer.getChannelData(0);
+                                const pcm16 = floatTo16BitPCM(inputData);
+                                voiceWs.send(pcm16);
+                                chunkCount++;
+                                if (chunkCount % 10 === 0) {
+                                    console.log('Sent audio chunk', chunkCount);
+                                }
+                            }
+                        };
+                        
+                        source.connect(audioProcessor);
+                        audioProcessor.connect(audioContext.destination);
+                        
+                        mediaRecorder = { stream, source, audioProcessor };
+                        isRecording = true;
+                        
+                        document.getElementById('startRecording').disabled = true;
+                        document.getElementById('stopRecording').disabled = false;
+                        document.getElementById('recordingIcon').innerHTML = '<span class="recording-dot"></span>';
+                        document.getElementById('transcriptOutput').innerHTML = '<div style="color: #58a6ff;"><strong>🎙️ Recording... Speak now!</strong></div><hr style="margin: 10px 0; border-color: #30363d;">';
+                        console.log('✓ Recording started');
+                    } catch (micError) {
+                        console.error('Microphone error:', micError);
+                        document.getElementById('transcriptOutput').innerHTML = 
+                            `<span style="color: #da3633;">❌ Microphone error: ${micError.message}</span>`;
+                        if (voiceWs) voiceWs.close();
+                    }
                 };
                 
                 voiceWs.onmessage = (event) => {
@@ -676,9 +696,10 @@ HTML_TEMPLATE = """
                     console.log('Voice WS message:', msg);
                     
                     if (msg.type === 'started') {
-                        console.log('Live transcription started');
+                        console.log('✓ Live transcription started');
                     } else if (msg.type === 'partial') {
                         // Show partial transcription (real-time updates)
+                        console.log('Partial:', msg.text);
                         const output = document.getElementById('transcriptOutput');
                         const lines = output.innerHTML.split('<hr')[0];
                         output.innerHTML = lines + '<hr style="margin: 10px 0; border-color: #30363d;">' +
@@ -686,11 +707,13 @@ HTML_TEMPLATE = """
                         output.scrollTop = output.scrollHeight;
                     } else if (msg.type === 'final') {
                         // Show final transcription
+                        console.log('Final:', msg.text);
                         const output = document.getElementById('transcriptOutput');
                         const timestamp = new Date().toLocaleTimeString();
                         output.innerHTML += `<div style="color: #238636; margin-top: 5px;"><strong>[${timestamp}]</strong> ${escapeHtml(msg.text)}</div>`;
                         output.scrollTop = output.scrollHeight;
                     } else if (msg.type === 'error') {
+                        console.error('Transcription error:', msg.error);
                         document.getElementById('transcriptOutput').innerHTML += 
                             `<div style="color: #da3633;">❌ Error: ${escapeHtml(msg.error)}</div>`;
                     } else if (msg.type === 'stopped') {
@@ -712,7 +735,7 @@ HTML_TEMPLATE = """
             } catch (error) {
                 console.error('Recording error:', error);
                 document.getElementById('transcriptOutput').innerHTML = 
-                    `<span style="color: #da3633;">❌ Microphone access denied: ${error.message}</span>`;
+                    `<span style="color: #da3633;">❌ Error: ${error.message}</span>`;
                 stopRecording();
             }
         }
