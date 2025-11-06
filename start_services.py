@@ -47,32 +47,56 @@ def start_services():
     
     for service_name in SERVICES:
         service_dir = services_base_dir / service_name
-        service_path = service_dir / "service.py"
         
-        if not service_path.exists():
-            print(f"⚠️  Warning: {service_path} not found, skipping...")
+        # Check for Node.js service first (service.js), then Python (service.py)
+        node_service_path = service_dir / "service.js"
+        python_service_path = service_dir / "service.py"
+        
+        if node_service_path.exists():
+            # Node.js service
+            port = SERVICE_PORTS.get(service_name)
+            print(f"Starting {service_name:12} on port {port} (Node.js)...")
+            
+            # Create log files for each service
+            log_dir = project_root / "logs"
+            log_dir.mkdir(exist_ok=True)
+            stdout_log = log_dir / f"{service_name}_stdout.log"
+            stderr_log = log_dir / f"{service_name}_stderr.log"
+            
+            proc = subprocess.Popen(
+                ["node", "service.js"],
+                stdout=open(stdout_log, 'w'),
+                stderr=open(stderr_log, 'w'),
+                cwd=str(service_dir),
+                env=env
+            )
+            processes.append((service_name, port, proc))
+            time.sleep(0.5)
+            
+        elif python_service_path.exists():
+            # Python service
+            port = SERVICE_PORTS.get(service_name)
+            print(f"Starting {service_name:12} on port {port} (Python)...")
+            
+            # Create log files for each service
+            log_dir = project_root / "logs"
+            log_dir.mkdir(exist_ok=True)
+            stdout_log = log_dir / f"{service_name}_stdout.log"
+            stderr_log = log_dir / f"{service_name}_stderr.log"
+            
+            proc = subprocess.Popen(
+                [sys.executable, str(python_service_path)],
+                stdout=open(stdout_log, 'w'),
+                stderr=open(stderr_log, 'w'),
+                cwd=str(project_root),
+                env=env  # Pass environment with PYTHONPATH
+            )
+            processes.append((service_name, port, proc))
+            time.sleep(0.5)
+            
+        else:
+            print(f"⚠️  Warning: No service.py or service.js found in {service_dir}, skipping...")
             continue
-        
-        port = SERVICE_PORTS.get(service_name)
-        
-        print(f"Starting {service_name:12} on port {port}...")
-        
-        # Start service in background
-        # Create log files for each service
-        log_dir = project_root / "logs"
-        log_dir.mkdir(exist_ok=True)
-        stdout_log = log_dir / f"{service_name}_stdout.log"
-        stderr_log = log_dir / f"{service_name}_stderr.log"
-        
-        proc = subprocess.Popen(
-            [sys.executable, str(service_path)],
-            stdout=open(stdout_log, 'w'),
-            stderr=open(stderr_log, 'w'),
-            cwd=str(project_root),
-            env=env  # Pass environment with PYTHONPATH
-        )
-        processes.append((service_name, port, proc))
-        time.sleep(0.5)  # Small delay between starts
     
     print("-" * 60)
     print(f"✅ Started {len(processes)} services")

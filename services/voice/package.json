@@ -1,0 +1,20 @@
+{
+  "name": "voice-service",
+  "version": "1.0.0",
+  "description": "Voice transcription and synthesis service using Azure AI Services",
+  "main": "service.js",
+  "scripts": {
+    "start": "node service.js",
+    "dev": "nodemon service.js"
+  },
+  "keywords": ["voice", "speech-to-text", "text-to-speech", "azure"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
