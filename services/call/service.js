@@ -380,6 +380,22 @@ wss.on('connection', (ws, req) => {
     return pcm16k;
   };
 
+  // Resample from 16kHz to 8kHz (simple decimation - take every other sample)
+  const resample16to8 = (pcm16k) => {
+    // pcm16k is PCM16 at 16kHz (2 bytes per sample)
+    const numSamples16k = pcm16k.length / 2;
+    const numSamples8k = Math.floor(numSamples16k / 2);
+    const pcm8k = Buffer.alloc(numSamples8k * 2);
+    
+    for (let i = 0; i < numSamples8k; i++) {
+      // Take every other sample (decimation)
+      const sample = pcm16k.readInt16LE(i * 4);
+      pcm8k.writeInt16LE(sample, i * 2);
+    }
+    
+    return pcm8k;
+  };
+
   // Connect to handler service (handler orchestrates everything)
   const connectToHandlerService = () => {
     try {
@@ -428,8 +444,11 @@ wss.on('connection', (ws, req) => {
                 // WAV files have a 44-byte header, skip it to get raw PCM16 data
                 const pcmData = wavBuffer.slice(44);
                 
-                // Convert PCM16 to mulaw for Twilio
-                const mulawData = pcmToMulaw(pcmData);
+                // Downsample from 16kHz to 8kHz (handler sends 16kHz, Twilio expects 8kHz)
+                const pcm8k = resample16to8(pcmData);
+                
+                // Convert PCM16 @ 8kHz to mulaw for Twilio
+                const mulawData = pcmToMulaw(pcm8k);
                 
                 // Encode as base64 for Twilio
                 const mulawBase64 = mulawData.toString('base64');
