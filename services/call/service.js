@@ -206,15 +206,13 @@ app.post('/voice-webhook', (req, res) => {
     totalCalls: callMetrics.totalCalls
   });
   
-  // Store call info - no logic, just tracking
+  // Store call info - minimal tracking, handler owns conversation state
   activeCalls.set(callSid, {
     phone: callerPhone,
     callSid: callSid,
     startedAt: Date.now(),
     answeredAt: null,
     endedAt: null,
-    transcript: '',
-    partials: [],
     endReason: null
   });
   
@@ -474,15 +472,7 @@ wss.on('connection', (ws, req) => {
                   log('ERROR', '[AUDIO] Twilio WebSocket not available for playback', { callSid: callSid });
                 }
                 
-                // Track that we played audio (for metrics only)
-                if (activeCalls.has(callSid)) {
-                  const call = activeCalls.get(callSid);
-                  if (!call.responses) call.responses = [];
-                  call.responses.push({
-                    timestamp: Date.now(),
-                    audioSize: wavBuffer.length
-                  });
-                }
+                // Call service doesn't track responses - handler owns conversation state
               } catch (err) {
                 log('ERROR', '[AUDIO] Error processing TTS audio', { error: err.message, callSid: callSid });
               }
@@ -720,8 +710,7 @@ app.get('/active', (req, res) => {
     call_id: call.callSid,
     phone: call.phone,
     started_at: call.startedAt / 1000,
-    transcript: call.transcript,
-    partials_count: call.partials.length
+    duration: (Date.now() - call.startedAt) / 1000
   }));
   
   res.json(calls);
@@ -738,8 +727,7 @@ app.get('/call/:callSid', (req, res) => {
     call_id: call.callSid,
     phone: call.phone,
     started_at: call.startedAt / 1000,
-    transcript: call.transcript,
-    partials: call.partials
+    duration: (Date.now() - call.startedAt) / 1000
   });
 });
 

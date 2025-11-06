@@ -43,6 +43,11 @@ QR_URL = get_service_url("qr")
 # In-memory session store (in production, use Redis or a database)
 sessions = {}
 
+# In-memory conversation history store (in production, use a database)
+# Structure: { call_sid: { phone: str, messages: [...], started_at: timestamp, ended_at: timestamp } }
+conversation_history = {}
+completed_conversations = []  # List of completed conversations
+
 
 class HandleRequest(BaseModel):
     phone: str
@@ -313,6 +318,15 @@ async def call_stream_endpoint(websocket: WebSocket):
                             phone = msg.get('phone')
                             logger.info(f"Call stream started for {call_sid}", call_sid=call_sid, phone=phone)
                             
+                            # Initialize conversation history for this call
+                            conversation_history[call_sid] = {
+                                'call_sid': call_sid,
+                                'phone': phone,
+                                'messages': [],
+                                'started_at': time.time(),
+                                'ended_at': None
+                            }
+                            
                             # Send welcome message
                             welcome_text = "Hello! I'm your AI banking assistant. How can I help you today?"
                             await send_tts_to_caller(welcome_text)
@@ -325,8 +339,9 @@ async def call_stream_endpoint(websocket: WebSocket):
                 
                 logger.info("Audio forwarding loop ended", call_sid=call_sid)
             except WebSocketDisconnect:
-                logger.info("Call service disconnected", call_sid=call_sid)
+                logger.info("Call service disconnected (user hung up)", call_sid=call_sid)
                 conversation_active = False
+                # Break out to trigger cleanup
             except Exception as e:
                 logger.error(f"Error forwarding to voice: {e}", call_sid=call_sid)
                 conversation_active = False
@@ -335,6 +350,14 @@ async def call_stream_endpoint(websocket: WebSocket):
             """Generate TTS and instruct call service to play audio to caller"""
             try:
                 logger.info(f"[ASSISTANT RESPONSE] \"{text}\"", call_sid=call_sid, phone=phone)
+                
+                # Store assistant message in conversation history
+                if call_sid in conversation_history:
+                    conversation_history[call_sid]['messages'].append({
+                        'role': 'assistant',
+                        'text': text,
+                        'timestamp': time.time()
+                    })
                 
                 # Generate TTS using voice service
                 tts_response = requests.post(
@@ -350,10 +373,11 @@ async def call_stream_endpoint(websocket: WebSocket):
                     
                     logger.info(f"TTS generated, instructing call service to play audio", call_sid=call_sid)
                     
-                    # Instruct call service to play this audio
+                    # Instruct call service to play this audio (with text for reference)
                     await websocket.send_json({
                         'type': 'play_audio',
                         'audio': audio_base64,
+                        'text': text,  # Include text for logging/debugging
                         'format': 'wav'
                     })
                     
@@ -370,10 +394,25 @@ async def call_stream_endpoint(websocket: WebSocket):
                 logger.info(f"Processing with LLM: \"{user_text}\"", call_sid=call_sid)
                 metrics.increment("llm_queries")
                 
-                # Get response from LLM service
+                # Build conversation context from history
+                conversation_context = []
+                if call_sid in conversation_history:
+                    for msg in conversation_history[call_sid]['messages']:
+                        conversation_context.append({
+                            'role': msg['role'],
+                            'content': msg['text']
+                        })
+                
+                # Add current user message to context
+                conversation_context.append({
+                    'role': 'user',
+                    'content': user_text
+                })
+                
+                # Get response from LLM service with full context
                 llm_response = requests.post(
                     f"{LLM_URL}/answer",
-                    json={"question": user_text},
+                    json={"question": user_text, "conversation_history": conversation_context},
                     timeout=15
                 )
                 llm_response.raise_for_status()
@@ -414,8 +453,16 @@ async def call_stream_endpoint(websocket: WebSocket):
                     elif data.get('type') == 'final':
                         # Complete sentence detected
                         user_text = data.get('text', '').strip()
-                        logger.info(f"[FINAL SENTENCE] \"{user_text}\"", call_sid=call_sid, phone=phone)
+                        logger.info(f"[USER SAID] \"{user_text}\"", call_sid=call_sid, phone=phone)
                         metrics.increment("transcriptions_completed")
+                        
+                        # Store user message in conversation history
+                        if call_sid in conversation_history:
+                            conversation_history[call_sid]['messages'].append({
+                                'role': 'user',
+                                'text': user_text,
+                                'timestamp': time.time()
+                            })
                         
                         if user_text:
                             # Check if user wants to end call
@@ -476,10 +523,49 @@ async def call_stream_endpoint(websocket: WebSocket):
                 logger.info(f"Task {task_name} completed normally", call_sid=call_sid)
         
     except Exception as e:
-        logger.error(f"Call stream error: {e}")
+        logger.error(f"Call stream error: {e}", call_sid=call_sid)
     finally:
+        # Ensure conversation cleanup happens even if tasks fail
+        logger.info(f"Cleaning up call stream for {call_sid}", call_sid=call_sid)
+        
+        # Mark conversation as ended and save to completed conversations
+        if call_sid and call_sid in conversation_history:
+            conversation_history[call_sid]['ended_at'] = time.time()
+            duration = conversation_history[call_sid]['ended_at'] - conversation_history[call_sid]['started_at']
+            
+            # Log full conversation
+            logger.info("="*80)
+            logger.info(f"CALL ENDED - Full Conversation Log")
+            logger.info(f"Call SID: {call_sid}")
+            logger.info(f"Phone: {phone}")
+            logger.info(f"Duration: {duration:.2f}s")
+            logger.info(f"End Reason: {'User hung up' if not conversation_active else 'Normal completion'}")
+            logger.info("="*80)
+            for i, msg in enumerate(conversation_history[call_sid]['messages'], 1):
+                role_label = "👤 USER" if msg['role'] == 'user' else "🤖 ASSISTANT"
+                timestamp_offset = msg['timestamp'] - conversation_history[call_sid]['started_at']
+                logger.info(f"[{timestamp_offset:6.1f}s] {role_label}: {msg['text']}")
+            logger.info("="*80)
+            
+            # Save to completed conversations (keep last 50)
+            completed_conversations.insert(0, conversation_history[call_sid].copy())
+            if len(completed_conversations) > 50:
+                completed_conversations.pop()
+            
+            # Remove from active conversations
+            del conversation_history[call_sid]
+            logger.info(f"Conversation moved to completed list", call_sid=call_sid)
+        else:
+            logger.warning(f"No conversation history found for cleanup", call_sid=call_sid)
+        
+        # Close voice WebSocket
         if voice_ws:
-            await voice_ws.close()
+            try:
+                await voice_ws.close()
+                logger.info("Voice WebSocket closed", call_sid=call_sid)
+            except:
+                pass
+        
         logger.info("Call stream session ended", call_sid=call_sid)
 
 
@@ -504,12 +590,46 @@ def receive_call(phone: str):
 
 @app.post("/call/end")
 def end_call(call_id: str, transcript: str = ""):
-    """End a call and store transcript."""
-    logger.info(f"Ending call {call_id}", call_id=call_id)
+    """End a call and store transcript. Called by call service when call ends."""
+    logger.info(f"Received call end notification for {call_id}", call_id=call_id)
     metrics.increment("calls_ended")
-    resp = requests.post(f"{CALL_URL}/end", json={"call_id": call_id, "transcript": transcript})
-    resp.raise_for_status()
-    return resp.json()
+    
+    # If conversation is still in active state, move it to completed
+    if call_id in conversation_history:
+        logger.info(f"Moving conversation {call_id} from active to completed", call_id=call_id)
+        conversation_history[call_id]['ended_at'] = time.time()
+        duration = conversation_history[call_id]['ended_at'] - conversation_history[call_id]['started_at']
+        
+        # Log full conversation
+        logger.info("="*80)
+        logger.info(f"CALL ENDED - Full Conversation Log (via /call/end)")
+        logger.info(f"Call SID: {call_id}")
+        logger.info(f"Phone: {conversation_history[call_id]['phone']}")
+        logger.info(f"Duration: {duration:.2f}s")
+        logger.info("="*80)
+        for i, msg in enumerate(conversation_history[call_id]['messages'], 1):
+            role_label = "👤 USER" if msg['role'] == 'user' else "🤖 ASSISTANT"
+            timestamp_offset = msg['timestamp'] - conversation_history[call_id]['started_at']
+            logger.info(f"[{timestamp_offset:6.1f}s] {role_label}: {msg['text']}")
+        logger.info("="*80)
+        
+        # Save to completed conversations
+        completed_conversations.insert(0, conversation_history[call_id].copy())
+        if len(completed_conversations) > 50:
+            completed_conversations.pop()
+        
+        # Remove from active
+        del conversation_history[call_id]
+        logger.info(f"Conversation cleanup completed", call_id=call_id)
+    else:
+        logger.info(f"Conversation {call_id} already cleaned up or not found", call_id=call_id)
+    
+    # Forward to call service if needed
+    try:
+        resp = requests.post(f"{CALL_URL}/end", json={"call_id": call_id, "transcript": transcript}, timeout=2)
+        return resp.json() if resp.status_code == 200 else {"status": "ok"}
+    except:
+        return {"status": "ok", "message": "Call ended, conversation saved"}
 
 
 @app.get("/logs")
@@ -522,6 +642,93 @@ def get_logs(limit: int = 100):
 def get_metrics(period: Optional[int] = None):
     """Get metrics from this service."""
     return metrics.get_all_metrics(time_period_minutes=period)
+
+
+@app.get("/conversations/active")
+def get_active_conversations():
+    """Get all active conversation histories."""
+    return {
+        "active_conversations": list(conversation_history.values()),
+        "count": len(conversation_history)
+    }
+
+
+@app.get("/conversations/completed")
+def get_completed_conversations(limit: int = 50):
+    """Get completed conversation histories."""
+    return {
+        "completed_conversations": completed_conversations[:limit],
+        "count": len(completed_conversations),
+        "total_completed": len(completed_conversations)
+    }
+
+
+@app.get("/conversations/{call_sid}")
+def get_conversation(call_sid: str):
+    """Get conversation history for a specific call."""
+    # Check active conversations first
+    if call_sid in conversation_history:
+        return {
+            "status": "active",
+            "conversation": conversation_history[call_sid]
+        }
+    
+    # Check completed conversations
+    for conv in completed_conversations:
+        if conv['call_sid'] == call_sid:
+            return {
+                "status": "completed",
+                "conversation": conv
+            }
+    
+    return {"error": "Conversation not found"}, 404
+
+
+@app.post("/conversations/cleanup")
+@app.get("/conversations/cleanup")
+def cleanup_stuck_conversations(max_age_seconds: int = 300):
+    """
+    Manually cleanup conversations that are stuck in active state.
+    Moves conversations older than max_age_seconds to completed.
+    Can be called via POST /conversations/cleanup or GET /conversations/cleanup?max_age_seconds=300
+    """
+    current_time = time.time()
+    cleaned_up = []
+    
+    # Find stuck conversations (older than max_age_seconds)
+    stuck_calls = []
+    for call_sid, conv in conversation_history.items():
+        age = current_time - conv['started_at']
+        if age > max_age_seconds:
+            stuck_calls.append(call_sid)
+    
+    # Move them to completed
+    for call_sid in stuck_calls:
+        conv = conversation_history[call_sid]
+        conv['ended_at'] = current_time
+        duration = conv['ended_at'] - conv['started_at']
+        
+        logger.info(f"Cleaning up stuck conversation: {call_sid} (duration: {duration:.1f}s)", call_sid=call_sid)
+        
+        # Save to completed
+        completed_conversations.insert(0, conv.copy())
+        if len(completed_conversations) > 50:
+            completed_conversations.pop()
+        
+        # Remove from active
+        del conversation_history[call_sid]
+        cleaned_up.append({
+            "call_sid": call_sid,
+            "phone": conv['phone'],
+            "duration": duration,
+            "message_count": len(conv['messages'])
+        })
+    
+    return {
+        "status": "ok",
+        "cleaned_up_count": len(cleaned_up),
+        "conversations": cleaned_up
+    }
 
 
 if __name__ == "__main__":

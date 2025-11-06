@@ -177,6 +177,19 @@ async def proxy_llm_answer(request_data: dict):
         return {"error": str(e)}
 
 
+@app.get("/api/conversations/completed")
+async def proxy_conversations_completed(limit: int = 50):
+    """Proxy request to get completed conversations from handler service."""
+    try:
+        resp = requests.get(
+            f"http://localhost:8012/conversations/completed?limit={limit}",
+            timeout=5
+        )
+        return resp.json() if resp.status_code == 200 else {"error": resp.text}
+    except Exception as e:
+        return {"error": str(e), "completed_conversations": [], "count": 0}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def get_dashboard():
     """Serve the dashboard HTML."""
@@ -669,7 +682,18 @@ HTML_TEMPLATE = """
     </div>
     
     <div class="card">
-        <h2>📜 Live Logs</h2>
+        <h2>� Completed Call Conversations</h2>
+        <div class="controls">
+            <button onclick="refreshConversations()">🔄 Refresh</button>
+            <span id="conversationCount" style="color: #8b949e; margin-left: 10px;">Loading...</span>
+        </div>
+        <div id="conversationsContainer" style="max-height: 600px; overflow-y: auto;">
+            <em style="color: #8b949e;">Loading conversations...</em>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>�📜 Live Logs</h2>
         <div class="logs-container" id="logsContainer"></div>
     </div>
     
@@ -1158,10 +1182,79 @@ HTML_TEMPLATE = """
             chart.update();
         }
         
+        // Conversations Functions
+        async function refreshConversations() {
+            try {
+                const response = await fetch('/api/conversations/completed');
+                const data = await response.json();
+                
+                const container = document.getElementById('conversationsContainer');
+                const countSpan = document.getElementById('conversationCount');
+                
+                countSpan.textContent = `${data.count} completed conversation(s)`;
+                
+                if (data.completed_conversations && data.completed_conversations.length > 0) {
+                    const conversationsHtml = data.completed_conversations.map((conv, index) => {
+                        const startTime = new Date(conv.started_at * 1000).toLocaleString();
+                        const duration = conv.ended_at ? ((conv.ended_at - conv.started_at).toFixed(1)) : 'N/A';
+                        const messageCount = conv.messages.length;
+                        
+                        const messagesHtml = conv.messages.map(msg => {
+                            const role = msg.role === 'user' ? 'USER' : 'ASSISTANT';
+                            const roleClass = msg.role === 'user' ? 'user' : 'assistant';
+                            const icon = msg.role === 'user' ? '👤' : '🤖';
+                            const timestamp = new Date(msg.timestamp * 1000).toLocaleTimeString();
+                            
+                            return `
+                                <div class="chat-message ${roleClass}" style="margin: 8px 0;">
+                                    <div class="chat-label">${icon} ${role} <span style="color: #8b949e; font-weight: normal; font-size: 11px;">[${timestamp}]</span></div>
+                                    <div>${escapeHtml(msg.text)}</div>
+                                </div>
+                            `;
+                        }).join('');
+                        
+                        return `
+                            <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin: 10px 0;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #30363d;">
+                                    <div>
+                                        <div style="font-weight: bold; color: #58a6ff; font-size: 16px;">
+                                            📞 Call ${index + 1}
+                                        </div>
+                                        <div style="color: #8b949e; font-size: 13px; margin-top: 4px;">
+                                            ${escapeHtml(conv.phone)} • ${startTime}
+                                        </div>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <div style="color: #238636; font-weight: bold;">${duration}s</div>
+                                        <div style="color: #8b949e; font-size: 12px;">${messageCount} messages</div>
+                                    </div>
+                                </div>
+                                <div style="max-height: 300px; overflow-y: auto;">
+                                    ${messagesHtml}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    container.innerHTML = conversationsHtml;
+                } else {
+                    container.innerHTML = '<em style="color: #8b949e;">No completed conversations yet</em>';
+                }
+            } catch (error) {
+                console.error('Error fetching conversations:', error);
+                document.getElementById('conversationsContainer').innerHTML = 
+                    `<span style="color: #da3633;">❌ Error loading conversations: ${error.message}</span>`;
+            }
+        }
+        
         // Initialize
         connectWebSocket();
         initChart();
         refreshChart();
+        refreshConversations();
+        
+        // Auto-refresh conversations every 30 seconds
+        setInterval(refreshConversations, 30000);
     </script>
 </body>
 </html>
