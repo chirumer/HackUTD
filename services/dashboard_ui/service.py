@@ -373,13 +373,116 @@ HTML_TEMPLATE = """
             background: #238636;
             box-shadow: 0 0 10px #238636;
         }
+        
+        .test-section {
+            margin-top: 15px;
+            padding: 15px;
+            background: #0d1117;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+        }
+        
+        .test-section h3 {
+            color: #58a6ff;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        
+        input[type="text"], textarea {
+            width: 100%;
+            background: #0d1117;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            margin-bottom: 10px;
+        }
+        
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #1f6feb 0%, #0d419d 100%);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #da3633 0%, #a40e26 100%);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #238636 0%, #196c2e 100%);
+            color: white;
+        }
+        
+        .recording-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #da3633;
+            border-radius: 50%;
+            margin-right: 5px;
+            animation: pulse-recording 1.5s infinite;
+        }
+        
+        @keyframes pulse-recording {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .test-output {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 10px;
+            min-height: 60px;
+            color: #c9d1d9;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        
+        .chat-messages {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+        
+        .chat-message {
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 8px;
+            border-left: 3px solid #30363d;
+        }
+        
+        .chat-message.user {
+            background: #1c2128;
+            border-left-color: #58a6ff;
+        }
+        
+        .chat-message.assistant {
+            background: #161b22;
+            border-left-color: #238636;
+        }
+        
+        .chat-label {
+            font-weight: bold;
+            font-size: 12px;
+            color: #8b949e;
+            margin-bottom: 5px;
+        }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🏦 BankAssist Microservices Dashboard</h1>
         <div class="subtitle">
-            Real-time monitoring and metrics
+            Real-time monitoring, metrics, and service testing
             <span class="connection-status" id="wsStatus"></span>
         </div>
     </div>
@@ -393,6 +496,48 @@ HTML_TEMPLATE = """
         <div class="card">
             <h2>📈 System Metrics</h2>
             <div class="metrics-grid" id="systemMetrics"></div>
+        </div>
+    </div>
+    
+    <!-- Voice and LLM Testing -->
+    <div class="dashboard-grid">
+        <div class="card">
+            <h2>🎤 Voice Service Testing</h2>
+            <div class="test-section">
+                <h3>Speech-to-Text (STT)</h3>
+                <button id="startRecording" class="btn-primary" onclick="startRecording()">
+                    <span id="recordingIcon">🎙️</span> Start Recording
+                </button>
+                <button id="stopRecording" class="btn-danger" onclick="stopRecording()" disabled>
+                    ⏹️ Stop Recording
+                </button>
+                <div class="test-output" id="transcriptOutput">
+                    <em>Click "Start Recording" to begin...</em>
+                </div>
+            </div>
+            
+            <div class="test-section">
+                <h3>Text-to-Speech (TTS)</h3>
+                <input type="text" id="ttsInput" placeholder="Enter text to synthesize..." value="Hello, welcome to our banking service!">
+                <button class="btn-success" onclick="synthesizeSpeech()">🔊 Synthesize Speech</button>
+                <audio id="audioPlayer" controls style="width: 100%; margin-top: 10px; display: none;"></audio>
+                <div class="test-output" id="ttsOutput" style="display: none;"></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>🤖 LLM Chat Interface</h2>
+            <div class="test-section">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="chat-message assistant">
+                        <div class="chat-label">ASSISTANT</div>
+                        <div>Hello! I'm your AI banking assistant. How can I help you today?</div>
+                    </div>
+                </div>
+                <input type="text" id="chatInput" placeholder="Ask a question..." onkeypress="if(event.key==='Enter') sendChatMessage()">
+                <button class="btn-primary" onclick="sendChatMessage()">💬 Send</button>
+                <button class="btn-danger" onclick="clearChat()" style="margin-left: 10px;">🗑️ Clear</button>
+            </div>
         </div>
     </div>
     
@@ -429,6 +574,196 @@ HTML_TEMPLATE = """
         let ws;
         let chart;
         let latestData = {};
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        
+        const VOICE_API = 'http://localhost:8001';
+        const LLM_API = 'http://localhost:8004';
+        
+        // Voice Service Testing
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    document.getElementById('transcriptOutput').innerHTML = '<em>🔄 Transcribing...</em>';
+                    
+                    try {
+                        const reader = new FileReader();
+                        reader.readAsDataURL(audioBlob);
+                        reader.onloadend = async () => {
+                            const base64Audio = reader.result.split(',')[1];
+                            
+                            const response = await fetch(`${VOICE_API}/transcribe`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    audio_bytes: base64Audio,
+                                    format: 'wav'
+                                })
+                            });
+
+                            const data = await response.json();
+                            
+                            if (response.ok) {
+                                document.getElementById('transcriptOutput').innerHTML = 
+                                    `<strong>Transcript:</strong><br>${data.transcript}`;
+                            } else {
+                                throw new Error(data.error || 'Transcription failed');
+                            }
+                        };
+                    } catch (error) {
+                        document.getElementById('transcriptOutput').innerHTML = 
+                            `<span style="color: #da3633;">❌ Error: ${error.message}</span>`;
+                    }
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                document.getElementById('startRecording').disabled = true;
+                document.getElementById('stopRecording').disabled = false;
+                document.getElementById('recordingIcon').innerHTML = '<span class="recording-dot"></span>';
+                document.getElementById('transcriptOutput').innerHTML = '<em>🎙️ Listening... speak now!</em>';
+
+            } catch (error) {
+                document.getElementById('transcriptOutput').innerHTML = 
+                    `<span style="color: #da3633;">❌ Microphone access denied: ${error.message}</span>`;
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                isRecording = false;
+                document.getElementById('startRecording').disabled = false;
+                document.getElementById('stopRecording').disabled = true;
+                document.getElementById('recordingIcon').innerHTML = '🎙️';
+            }
+        }
+
+        async function synthesizeSpeech() {
+            const text = document.getElementById('ttsInput').value.trim();
+            
+            if (!text) {
+                alert('Please enter some text');
+                return;
+            }
+
+            document.getElementById('ttsOutput').style.display = 'block';
+            document.getElementById('ttsOutput').innerHTML = '🔄 Synthesizing speech...';
+            document.getElementById('audioPlayer').style.display = 'none';
+
+            try {
+                const response = await fetch(`${VOICE_API}/synthesize`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    const audioData = `data:audio/wav;base64,${data.audio_bytes}`;
+                    document.getElementById('audioPlayer').src = audioData;
+                    document.getElementById('audioPlayer').style.display = 'block';
+                    document.getElementById('audioPlayer').play();
+                    document.getElementById('ttsOutput').innerHTML = '✅ Speech synthesized successfully!';
+                    document.getElementById('ttsOutput').style.color = '#238636';
+                } else {
+                    throw new Error(data.error || 'Synthesis failed');
+                }
+            } catch (error) {
+                document.getElementById('ttsOutput').innerHTML = `❌ Error: ${error.message}`;
+                document.getElementById('ttsOutput').style.color = '#da3633';
+            }
+        }
+
+        // LLM Chat Interface
+        async function sendChatMessage() {
+            const input = document.getElementById('chatInput');
+            const question = input.value.trim();
+            
+            if (!question) return;
+            
+            // Add user message
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML += `
+                <div class="chat-message user">
+                    <div class="chat-label">YOU</div>
+                    <div>${escapeHtml(question)}</div>
+                </div>
+            `;
+            
+            // Add loading message
+            chatMessages.innerHTML += `
+                <div class="chat-message assistant" id="loading-message">
+                    <div class="chat-label">ASSISTANT</div>
+                    <div>🔄 Thinking...</div>
+                </div>
+            `;
+            
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            input.value = '';
+            
+            try {
+                const response = await fetch(`${LLM_API}/answer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
+                
+                const data = await response.json();
+                
+                // Remove loading message
+                document.getElementById('loading-message').remove();
+                
+                if (response.ok) {
+                    chatMessages.innerHTML += `
+                        <div class="chat-message assistant">
+                            <div class="chat-label">ASSISTANT (Confidence: ${(data.confidence * 100).toFixed(1)}%)</div>
+                            <div>${escapeHtml(data.answer)}</div>
+                        </div>
+                    `;
+                } else {
+                    throw new Error(data.error || 'Failed to get answer');
+                }
+            } catch (error) {
+                document.getElementById('loading-message').remove();
+                chatMessages.innerHTML += `
+                    <div class="chat-message assistant">
+                        <div class="chat-label">ERROR</div>
+                        <div style="color: #da3633;">❌ ${escapeHtml(error.message)}</div>
+                    </div>
+                `;
+            }
+            
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function clearChat() {
+            document.getElementById('chatMessages').innerHTML = `
+                <div class="chat-message assistant">
+                    <div class="chat-label">ASSISTANT</div>
+                    <div>Hello! I'm your AI banking assistant. How can I help you today?</div>
+                </div>
+            `;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
         
         function connectWebSocket() {
             const wsUrl = `ws://${window.location.host}/ws`;
