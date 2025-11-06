@@ -132,6 +132,12 @@ app.post('/answer', async (req, res) => {
   const startTime = Date.now();
   const { question, context = {} } = req.body;
   
+  // Validate question
+  if (!question || typeof question !== 'string' || question.trim().length === 0) {
+    log('ERROR', 'Empty or invalid question provided');
+    return res.status(400).json({ error: 'Question is required and must be a non-empty string' });
+  }
+  
   log('INFO', `Answering question: '${question.substring(0, 50)}...'`, { context_keys: Object.keys(context) });
   incrementCounter('questions_total');
   

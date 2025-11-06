@@ -5,7 +5,9 @@
   "main": "service.js",
   "scripts": {
     "start": "node service.js",
-    "dev": "nodemon service.js"
+    "dev": "nodemon service.js",
+    "test": "mocha test_service.test.js --timeout 10000",
+    "test:watch": "mocha test_service.test.js --timeout 10000 --watch"
   },
   "keywords": ["llm", "openai", "question-answering", "ai"],
   "author": "",
@@ -16,6 +18,9 @@
     "openai": "^4.20.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "mocha": "^10.2.0",
+    "chai": "^4.3.10",
+    "supertest": "^6.3.3"
   }
 }
