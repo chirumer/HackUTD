@@ -206,7 +206,7 @@ app.post('/voice-webhook', (req, res) => {
     totalCalls: callMetrics.totalCalls
   });
   
-  // Store call info
+  // Store call info - no logic, just tracking
   activeCalls.set(callSid, {
     phone: callerPhone,
     callSid: callSid,
@@ -222,10 +222,10 @@ app.post('/voice-webhook', (req, res) => {
   
   const response = new Twiml.VoiceResponse();
   
-  // Greet the caller
-  response.say({ voice: 'alice' }, 'Welcome to Bank Assist. Please tell us how we can help you today.');
+  // No greeting here - handler service controls conversation flow
+  // Just establish WebSocket connection for bidirectional audio
   
-  log('INFO', `✅ [CALL ANSWERED] Call ${callSid} answered and greeting played`, {
+  log('INFO', `✅ [CALL ANSWERED] Call ${callSid} answered, connecting to handler`, {
     callSid: callSid,
     phone: callerPhone
   });
@@ -278,8 +278,6 @@ wss.on('connection', (ws, req) => {
   let callerPhone = null;
   let streamSid = null;
   let voiceWs = null;
-  let fullTranscript = '';
-  let currentSentence = '';
   
   // Set up ping/pong for connection health
   ws.isAlive = true;
@@ -332,6 +330,29 @@ wss.on('connection', (ws, req) => {
     return pcmBuffer;
   };
 
+  // Convert PCM16 to mulaw
+  const pcmToMulaw = (pcmBuffer) => {
+    const linearToMulaw = (sample) => {
+      const BIAS = 0x84;
+      const CLIP = 32635;
+      const sign = (sample < 0) ? 0x80 : 0x00;
+      sample = Math.abs(sample);
+      if (sample > CLIP) sample = CLIP;
+      sample = sample + BIAS;
+      const exponent = Math.floor(Math.log2(sample) - 7);
+      const mantissa = (sample >> (exponent + 3)) & 0x0F;
+      const mulaw = ~(sign | (exponent << 4) | mantissa);
+      return mulaw & 0xFF;
+    };
+
+    const mulawBuffer = Buffer.alloc(pcmBuffer.length / 2);
+    for (let i = 0; i < mulawBuffer.length; i++) {
+      const sample = pcmBuffer.readInt16LE(i * 2);
+      mulawBuffer[i] = linearToMulaw(sample);
+    }
+    return mulawBuffer;
+  };
+
   // Resample from 8kHz to 16kHz (simple linear interpolation)
   const resample8to16 = (pcm8k) => {
     // pcm8k is PCM16 at 8kHz (2 bytes per sample)
@@ -359,8 +380,8 @@ wss.on('connection', (ws, req) => {
     return pcm16k;
   };
 
-  // Connect to handler service for live transcription (handler connects to voice service)
-  const connectToVoiceService = () => {
+  // Connect to handler service (handler orchestrates everything)
+  const connectToHandlerService = () => {
     try {
       const WebSocket = require('ws');
       const handlerWsUrl = HANDLER_URL.replace('http', 'ws') + '/call/stream';
@@ -369,7 +390,7 @@ wss.on('connection', (ws, req) => {
       voiceWs = new WebSocket(handlerWsUrl);
       
       voiceWs.on('open', () => {
-        log('INFO', '[WS] Connected to handler service for live transcription');
+        log('INFO', '[WS] Connected to handler service');
         
         // Send start message with call metadata
         voiceWs.send(JSON.stringify({
@@ -378,7 +399,7 @@ wss.on('connection', (ws, req) => {
           phone: callerPhone
         }));
         
-        // Store voice WebSocket reference
+        // Store handler WebSocket reference
         const wsRefs = activeWebSockets.get(callSid);
         if (wsRefs) {
           wsRefs.voiceWs = voiceWs;
@@ -389,37 +410,78 @@ wss.on('connection', (ws, req) => {
         try {
           const message = JSON.parse(data.toString());
           
-          if (message.type === 'partial') {
-            // Partial transcription from handler (handler already logged it)
-            if (activeCalls.has(callSid)) {
-              const call = activeCalls.get(callSid);
-              call.partials.push({
-                timestamp: Date.now(),
-                text: message.text
-              });
+          // Handler sends instructions - call service just executes
+          
+          if (message.type === 'play_audio') {
+            // Handler instructs: play this audio to caller
+            log('INFO', '[HANDLER INSTRUCTION] Play TTS audio to caller', { callSid: callSid });
+            
+            if (message.audio) {
+              try {
+                // Decode base64 WAV audio from handler
+                const wavBuffer = Buffer.from(message.audio, 'base64');
+                log('INFO', '[AUDIO] Received TTS audio for playback', { 
+                  callSid: callSid,
+                  wavSize: wavBuffer.length 
+                });
+                
+                // WAV files have a 44-byte header, skip it to get raw PCM16 data
+                const pcmData = wavBuffer.slice(44);
+                
+                // Convert PCM16 to mulaw for Twilio
+                const mulawData = pcmToMulaw(pcmData);
+                
+                // Encode as base64 for Twilio
+                const mulawBase64 = mulawData.toString('base64');
+                
+                // Get the Twilio WebSocket for this call
+                const wsRefs = activeWebSockets.get(callSid);
+                if (wsRefs && wsRefs.twilioWs && wsRefs.twilioWs.readyState === 1) {
+                  // Send audio to Twilio Media Stream for playback
+                  const mediaMessage = {
+                    event: 'media',
+                    streamSid: streamSid,
+                    media: {
+                      payload: mulawBase64
+                    }
+                  };
+                  
+                  wsRefs.twilioWs.send(JSON.stringify(mediaMessage));
+                  log('INFO', '[AUDIO] Sent TTS audio to Twilio for playback', { 
+                    callSid: callSid,
+                    mulawSize: mulawData.length 
+                  });
+                } else {
+                  log('ERROR', '[AUDIO] Twilio WebSocket not available for playback', { callSid: callSid });
+                }
+                
+                // Track that we played audio (for metrics only)
+                if (activeCalls.has(callSid)) {
+                  const call = activeCalls.get(callSid);
+                  if (!call.responses) call.responses = [];
+                  call.responses.push({
+                    timestamp: Date.now(),
+                    audioSize: wavBuffer.length
+                  });
+                }
+              } catch (err) {
+                log('ERROR', '[AUDIO] Error processing TTS audio', { error: err.message, callSid: callSid });
+              }
             }
-            
-            currentSentence = message.text;
-          } 
-          else if (message.type === 'final') {
-            // Complete sentence detected (handler already logged it)
-            fullTranscript += message.text + ' ';
-            
-            if (activeCalls.has(callSid)) {
-              const call = activeCalls.get(callSid);
-              call.transcript = fullTranscript.trim();
-            }
-            
-            // Forward to handler service for intent processing
-            forwardToHandler(callSid, callerPhone, message.text);
-            
-            // End the call after receiving a complete sentence
-            setTimeout(() => {
-              endCallGracefully(callSid, fullTranscript.trim());
-            }, 1000);
           }
+          else if (message.type === 'end_call') {
+            // Handler instructs: end the call
+            log('INFO', '[HANDLER INSTRUCTION] End call', { 
+              callSid: callSid,
+              reason: message.reason 
+            });
+            
+            // Execute handler's instruction immediately
+            endCallGracefully(callSid, message.reason || 'handler_requested');
+          }
+          // Ignore all other message types - call service doesn't care about transcriptions
         } catch (err) {
-          log('ERROR', '[WS] Error processing handler service message', { error: err.message });
+          log('ERROR', '[WS] Error processing handler instruction', { error: err.message });
         }
       });
       
@@ -435,46 +497,14 @@ wss.on('connection', (ws, req) => {
     }
   };
   
-  // Forward completed sentence to handler service
-  const forwardToHandler = async (callSid, phone, text) => {
-    try {
-      log('INFO', `[HANDLER] Forwarding sentence to handler`, { 
-        callSid: callSid,
-        phone: phone,
-        text: text 
-      });
-      
-      const response = await axios.post(`${HANDLER_URL}/handle`, {
-        phone: phone,
-        account_id: phone, // Using phone as account_id for now
-        text: text,
-        verified: false
-      });
-      
-      log('INFO', `[HANDLER] Response received`, { 
-        reply: response.data.reply 
-      });
-      
-      // Optionally speak the response back to the caller
-      // (This would require additional Twilio TTS integration)
-      
-    } catch (err) {
-      log('ERROR', '[HANDLER] Failed to forward to handler', { 
-        error: err.message,
-        status: err.response?.status,
-        data: err.response?.data,
-        stack: err.stack
-      });
-    }
-  };  // End call gracefully
-  const endCallGracefully = async (callSid, transcript, reason = 'system') => {
+  // End call gracefully - ONLY called when handler instructs
+  const endCallGracefully = async (callSid, reason = 'handler_requested') => {
     try {
       const call = activeCalls.get(callSid);
       const duration = call ? (Date.now() - call.startedAt) / 1000 : 0;
       
-      log('INFO', `🔴 [CALL ENDING] Initiating call end`, { 
+      log('INFO', `🔴 [CALL ENDING] Executing handler instruction to end call`, { 
         callSid: callSid,
-        transcript: transcript,
         reason: reason,
         duration: `${duration.toFixed(2)}s`
       });
@@ -483,15 +513,14 @@ wss.on('connection', (ws, req) => {
       if (call) {
         call.endedAt = Date.now();
         call.endReason = reason;
-        call.transcript = transcript;
       }
       
       // Get WebSocket references for this call
       const wsRefs = activeWebSockets.get(callSid);
       
-      // Notify handler service - using query params for FastAPI
+      // Notify handler service that call is ending
       try {
-        const url = `${HANDLER_URL}/call/end?call_id=${encodeURIComponent(callSid)}&transcript=${encodeURIComponent(transcript || '')}`;
+        const url = `${HANDLER_URL}/call/end?call_id=${encodeURIComponent(callSid)}`;
         await axios.post(url);
         log('INFO', `[CALL] Handler notified of call end`, { callSid: callSid });
       } catch (handlerErr) {
@@ -508,7 +537,7 @@ wss.on('connection', (ws, req) => {
         
         // Update metrics
         updateMetrics('completedCalls');
-        if (reason === 'user') {
+        if (reason === 'user_completed') {
           updateMetrics('userHangups');
         } else {
           updateMetrics('systemHangups');
@@ -520,19 +549,14 @@ wss.on('connection', (ws, req) => {
           calculateAverageDuration();
         }
         
-        // Track transcription success
-        if (transcript && transcript.length > 0) {
-          updateMetrics('transcriptionSuccess');
-        } else {
-          updateMetrics('transcriptionFailed');
-        }
+        // Always count as success if handler instructed end
+        updateMetrics('transcriptionSuccess');
         
         log('INFO', `✅ [CALL ENDED] Call completed successfully`, { 
           callSid: callSid,
           status: twilioCall.status,
           reason: reason,
           duration: `${duration.toFixed(2)}s`,
-          transcriptLength: transcript ? transcript.length : 0,
           metrics: {
             total: callMetrics.totalCalls,
             completed: callMetrics.completedCalls,
@@ -600,8 +624,8 @@ wss.on('connection', (ws, req) => {
           voiceWs: null // Will be set when voice service connects
         });
         
-        // Connect to voice service
-        connectToVoiceService();
+        // Connect to handler service
+        connectToHandlerService();
       } 
       else if (message.event === 'media') {
         // Twilio sends mulaw encoded audio at 8kHz, base64 encoded

@@ -179,7 +179,16 @@ See each service's README for specific environment variables.
 In one terminal, boot the microservices:
 
 ```bash
+# Start all services (default)
 python3 start_services.py
+# or explicitly
+python3 start_services.py start
+
+# Stop all services
+python3 start_services.py stop
+
+# Restart all services (kill and start)
+python3 start_services.py restart
 ```
 
 This will:
@@ -187,6 +196,11 @@ This will:
 - Run health checks
 - Print endpoints and status
 - Stream minimal logs (detailed logs go to logs/)
+
+**Command options:**
+- `start` (default) - Start all services
+- `stop` - Kill all running services
+- `restart` - Kill and restart all services
 
 ### 2) Run the demo
 

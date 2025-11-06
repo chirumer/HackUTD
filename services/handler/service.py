@@ -265,7 +265,8 @@ def health():
 async def call_stream_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for handling call audio streams.
-    Receives audio from call service, forwards to voice service for transcription, and logs results.
+    Receives audio from call service, forwards to voice service for transcription,
+    processes responses with LLM, and streams TTS audio back to caller.
     """
     await websocket.accept()
     logger.info("Call service connected for audio streaming")
@@ -273,6 +274,8 @@ async def call_stream_endpoint(websocket: WebSocket):
     voice_ws = None
     call_sid = None
     phone = None
+    conversation_active = True
+    pending_llm_tasks = []  # Track pending LLM responses
     
     try:
         # Import websockets library
@@ -282,13 +285,21 @@ async def call_stream_endpoint(websocket: WebSocket):
         voice_ws_url = VOICE_URL.replace('http', 'ws') + '/live-transcribe'
         logger.info(f"Connecting to voice service: {voice_ws_url}")
         
-        voice_ws = await websockets.connect(voice_ws_url)
+        # Connect with ping_interval to keep connection alive
+        voice_ws = await websockets.connect(
+            voice_ws_url,
+            ping_interval=20,  # Send ping every 20 seconds
+            ping_timeout=10,   # Wait 10 seconds for pong
+            close_timeout=10   # Wait 10 seconds when closing
+        )
         logger.info("Connected to voice service for transcription")
         
         async def forward_from_call_to_voice():
             """Forward audio from call service to voice service"""
+            nonlocal conversation_active, call_sid, phone
             try:
-                while True:
+                logger.info("Starting audio forwarding loop", call_sid=call_sid)
+                while conversation_active:
                     data = await websocket.receive()
                     
                     if 'bytes' in data:
@@ -298,56 +309,178 @@ async def call_stream_endpoint(websocket: WebSocket):
                         # Control message
                         msg = json.loads(data['text'])
                         if msg.get('type') == 'start':
-                            nonlocal call_sid, phone
                             call_sid = msg.get('call_sid')
                             phone = msg.get('phone')
-                            logger.info(f"Transcription started for call {call_sid}", call_sid=call_sid, phone=phone)
+                            logger.info(f"Call stream started for {call_sid}", call_sid=call_sid, phone=phone)
+                            
+                            # Send welcome message
+                            welcome_text = "Hello! I'm your AI banking assistant. How can I help you today?"
+                            await send_tts_to_caller(welcome_text)
+                            
                         elif msg.get('type') == 'stop':
-                            logger.info(f"Transcription stopped for call {call_sid}", call_sid=call_sid)
+                            logger.info(f"Call stream stopped for {call_sid}", call_sid=call_sid)
+                            conversation_active = False
                             await voice_ws.send(json.dumps({'type': 'stop'}))
                             break
+                
+                logger.info("Audio forwarding loop ended", call_sid=call_sid)
             except WebSocketDisconnect:
-                logger.info("Call service disconnected")
+                logger.info("Call service disconnected", call_sid=call_sid)
+                conversation_active = False
             except Exception as e:
-                logger.error(f"Error forwarding to voice: {e}")
+                logger.error(f"Error forwarding to voice: {e}", call_sid=call_sid)
+                conversation_active = False
+        
+        async def send_tts_to_caller(text: str):
+            """Generate TTS and instruct call service to play audio to caller"""
+            try:
+                logger.info(f"[ASSISTANT RESPONSE] \"{text}\"", call_sid=call_sid, phone=phone)
+                
+                # Generate TTS using voice service
+                tts_response = requests.post(
+                    f"{VOICE_URL}/synthesize",
+                    json={"text": text},
+                    timeout=10
+                )
+                tts_response.raise_for_status()
+                tts_data = tts_response.json()
+                
+                if 'audio_bytes' in tts_data:
+                    audio_base64 = tts_data['audio_bytes']
+                    
+                    logger.info(f"TTS generated, instructing call service to play audio", call_sid=call_sid)
+                    
+                    # Instruct call service to play this audio
+                    await websocket.send_json({
+                        'type': 'play_audio',
+                        'audio': audio_base64,
+                        'format': 'wav'
+                    })
+                    
+                    metrics.increment("tts_responses_sent")
+                else:
+                    logger.error("TTS response missing audio_bytes", call_sid=call_sid)
+                    
+            except Exception as e:
+                logger.error(f"Error generating TTS: {e}", call_sid=call_sid)
+        
+        async def process_with_llm(user_text: str):
+            """Process user input with LLM and respond"""
+            try:
+                logger.info(f"Processing with LLM: \"{user_text}\"", call_sid=call_sid)
+                metrics.increment("llm_queries")
+                
+                # Get response from LLM service
+                llm_response = requests.post(
+                    f"{LLM_URL}/answer",
+                    json={"question": user_text},
+                    timeout=15
+                )
+                llm_response.raise_for_status()
+                llm_data = llm_response.json()
+                
+                answer = llm_data.get('answer', "I'm sorry, I didn't understand that.")
+                
+                # Instruct call service to play TTS response
+                await send_tts_to_caller(answer)
+                
+            except Exception as e:
+                logger.error(f"Error processing with LLM: {e}", call_sid=call_sid)
+                # Send error response
+                await send_tts_to_caller("I'm sorry, I'm having trouble processing that. Could you please try again?")
+            finally:
+                # Remove this task from pending list
+                current_task = asyncio.current_task()
+                if current_task in pending_llm_tasks:
+                    pending_llm_tasks.remove(current_task)
+                    logger.info(f"LLM task completed, {len(pending_llm_tasks)} tasks remaining", call_sid=call_sid)
         
         async def forward_from_voice_to_call():
-            """Forward transcription results from voice service to call service"""
+            """Forward transcription results from voice service and process with LLM"""
+            nonlocal conversation_active
             try:
+                logger.info("Starting transcription loop", call_sid=call_sid)
                 async for message in voice_ws:
+                    if not conversation_active:
+                        logger.info("Conversation marked inactive, exiting transcription loop", call_sid=call_sid)
+                        break
+                        
                     data = json.loads(message)
                     
                     if data.get('type') == 'partial':
-                        # Log partial transcription
+                        # Log partial transcription (handler only - call service doesn't need to know)
                         logger.info(f"[PARTIAL] \"{data.get('text')}\"", call_sid=call_sid, phone=phone)
-                        # Forward to call service
-                        await websocket.send_json(data)
                     
                     elif data.get('type') == 'final':
-                        # Log final transcription
-                        logger.info(f"[FINAL SENTENCE] \"{data.get('text')}\"", call_sid=call_sid, phone=phone)
+                        # Complete sentence detected
+                        user_text = data.get('text', '').strip()
+                        logger.info(f"[FINAL SENTENCE] \"{user_text}\"", call_sid=call_sid, phone=phone)
                         metrics.increment("transcriptions_completed")
-                        # Forward to call service
-                        await websocket.send_json(data)
+                        
+                        if user_text:
+                            # Check if user wants to end call
+                            end_phrases = ['goodbye', 'bye', 'thank you goodbye', 'that\'s all', 'hang up', 'end call']
+                            if any(phrase in user_text.lower() for phrase in end_phrases):
+                                logger.info("User requested call end", call_sid=call_sid)
+                                
+                                # Wait for all pending LLM responses to complete
+                                if pending_llm_tasks:
+                                    logger.info(f"Waiting for {len(pending_llm_tasks)} pending LLM responses before ending call", call_sid=call_sid)
+                                    await asyncio.gather(*pending_llm_tasks, return_exceptions=True)
+                                    logger.info("All pending LLM responses completed", call_sid=call_sid)
+                                
+                                await send_tts_to_caller("Thank you for calling. Goodbye!")
+                                
+                                # Wait for audio to play
+                                await asyncio.sleep(5)
+                                
+                                # Instruct call service to end the call
+                                await websocket.send_json({
+                                    'type': 'end_call', 
+                                    'reason': 'user_completed'
+                                })
+                                conversation_active = False
+                                break
+                            
+                            # Process with LLM (async - continue transcribing)
+                            logger.info("Spawning LLM task, continuing to listen for more speech", call_sid=call_sid)
+                            task = asyncio.create_task(process_with_llm(user_text))
+                            pending_llm_tasks.append(task)  # Track this task
+                            # Loop continues - keep listening for more speech
                     
                     elif data.get('type') == 'error':
                         logger.error(f"Transcription error: {data.get('error')}", call_sid=call_sid)
-                        await websocket.send_json(data)
+                
+                # If we reach here, the voice_ws loop has ended
+                logger.info("Voice WebSocket stream ended (voice service closed connection or no more messages)", call_sid=call_sid)
+                        
             except Exception as e:
-                logger.error(f"Error forwarding from voice: {e}")
+                logger.error(f"Error in transcription loop: {e}", call_sid=call_sid)
+                conversation_active = False
         
         # Run both forwarding tasks concurrently
-        await asyncio.gather(
+        # Use return_exceptions=True to prevent one task's error from canceling the other
+        logger.info("Starting concurrent audio and transcription tasks", call_sid=call_sid)
+        results = await asyncio.gather(
             forward_from_call_to_voice(),
-            forward_from_voice_to_call()
+            forward_from_voice_to_call(),
+            return_exceptions=True
         )
         
+        # Log task completion
+        for i, result in enumerate(results):
+            task_name = ['forward_from_call_to_voice', 'forward_from_voice_to_call'][i]
+            if isinstance(result, Exception):
+                logger.error(f"Task {task_name} ended with exception: {result}", call_sid=call_sid)
+            else:
+                logger.info(f"Task {task_name} completed normally", call_sid=call_sid)
+        
     except Exception as e:
-        logger.error(f"Live transcription error: {e}")
+        logger.error(f"Call stream error: {e}")
     finally:
         if voice_ws:
             await voice_ws.close()
-        logger.info("Live transcription session ended", call_sid=call_sid)
+        logger.info("Call stream session ended", call_sid=call_sid)
 
 
 @app.post("/call/initiate")

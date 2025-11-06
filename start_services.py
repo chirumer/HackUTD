@@ -6,6 +6,7 @@ import sys
 import os
 import signal
 import requests
+import argparse
 from pathlib import Path
 
 # Add project root to Python path
@@ -113,7 +114,7 @@ def start_services():
 
 def shutdown_services(signum=None, frame=None):
     """Stop all services gracefully."""
-    print("\n\n🛑 Shutting down services...")
+    print("\n🛑 Shutting down services...")
     for name, port, proc in processes:
         print(f"Stopping {name}...")
         proc.terminate()
@@ -122,7 +123,57 @@ def shutdown_services(signum=None, frame=None):
         except subprocess.TimeoutExpired:
             proc.kill()
     print("✅ All services stopped")
-    sys.exit(0)
+    if signum is not None:
+        sys.exit(0)
+
+
+def kill_all_services():
+    """Kill all running services by process name."""
+    print("🛑 Killing all services...")
+    
+    # Kill Python services
+    python_services = [
+        "sms", "rag", "fraud", "database", "readquery", 
+        "writeops", "complaint", "qr", "handler", "dashboard", "dashboard_ui"
+    ]
+    
+    for service in python_services:
+        try:
+            subprocess.run(
+                ["pkill", "-f", f"python.*services/{service}/service.py"],
+                check=False,
+                capture_output=True
+            )
+            print(f"  ✓ Killed {service}")
+        except Exception as e:
+            print(f"  ✗ Failed to kill {service}: {e}")
+    
+    # Kill Node.js services
+    node_services = ["voice", "call", "llm"]
+    
+    for service in node_services:
+        try:
+            subprocess.run(
+                ["pkill", "-f", f"node.*services/{service}/service.js"],
+                check=False,
+                capture_output=True
+            )
+            print(f"  ✓ Killed {service}")
+        except Exception as e:
+            print(f"  ✗ Failed to kill {service}: {e}")
+    
+    # Also kill start_services.py if running
+    try:
+        subprocess.run(
+            ["pkill", "-f", "python.*start_services.py"],
+            check=False,
+            capture_output=True
+        )
+    except:
+        pass
+    
+    print("✅ All services killed")
+
 
 
 def check_health():
@@ -192,7 +243,40 @@ def update_twilio_webhook():
 
 
 if __name__ == "__main__":
-    # Register signal handlers
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Manage microservices",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 start_services.py start      # Start all services
+  python3 start_services.py stop       # Stop all services
+  python3 start_services.py restart    # Restart all services
+  python3 start_services.py            # Default: start all services
+        """
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="start",
+        choices=["start", "stop", "restart"],
+        help="Command to execute (default: start)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Handle commands
+    if args.command == "stop":
+        kill_all_services()
+        sys.exit(0)
+    
+    elif args.command == "restart":
+        kill_all_services()
+        print("\n⏳ Waiting for processes to terminate...")
+        time.sleep(2)
+        # Continue to start services below
+    
+    # Register signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, shutdown_services)
     signal.signal(signal.SIGTERM, shutdown_services)
     
