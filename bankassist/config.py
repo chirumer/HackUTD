@@ -13,7 +13,6 @@ SERVICE_PORTS = {
     "complaint": 8010,
     "qr": 8011,
     "handler": 8012,
-    "dashboard": 8013,
     "dashboard_ui": 8014,
 }
 

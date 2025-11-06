@@ -29,7 +29,6 @@ SERVICES = [
     "complaint",
     "qr",
     "handler",
-    "dashboard",
     "dashboard_ui",
 ]
 
@@ -107,7 +106,6 @@ def start_services():
         print(f"  {name:15} → http://localhost:{port}")
     
     print("\n🎨 Dashboard UI: http://localhost:8014")
-    print("📊 Stats API:    http://localhost:8013/status")
     print("🎯 Handler:      http://localhost:8012/handle")
     print("\nPress Ctrl+C to stop all services")
 
@@ -134,7 +132,7 @@ def kill_all_services():
     # Kill Python services
     python_services = [
         "sms", "rag", "fraud", "database", "readquery", 
-        "writeops", "complaint", "qr", "handler", "dashboard", "dashboard_ui"
+        "writeops", "complaint", "qr", "handler", "dashboard_ui"
     ]
     
     for service in python_services:

@@ -345,7 +345,6 @@ The dashboard uses WebSocket for live updates:
 
 - **Dashboard UI**: http://localhost:8014
 - **Handler API**: http://localhost:8012
-- **Stats API**: http://localhost:8013/status
 - **Logs Directory**: `/logs/`
 - **Logger Utility**: `bankassist/utils/logger.py`
 - **Metrics Utility**: `bankassist/utils/metrics.py`

@@ -26,8 +26,7 @@ Each service runs on its own port and communicates via HTTP:
 - Complaint Service (port 8010): Lodge complaints with photos
 - QR Code Service (port 8011): Generate payment QR codes
 - Handler Service (port 8012): Orchestrator — routes intents, manages sessions
-- Dashboard Service (port 8013): Admin JSON overview aggregating service stats
-- (Optional) Dashboard UI Service (port 8014): Dark-themed live monitoring UI
+- Dashboard UI Service (port 8014): Live monitoring UI with real-time metrics, logs, and testing tools
 
 ### Architecture Diagram (Figma)
 
@@ -84,7 +83,6 @@ services/                  # Individual microservices (isolated)
 ├── complaint/            # Port 8010 - Complaint filing
 ├── qr/                   # Port 8011 - QR code generation
 ├── handler/              # Port 8012 - Main orchestrator
-├── dashboard/            # Port 8013 - Admin JSON API
 └── dashboard_ui/         # Port 8014 - Live monitoring UI
 
 shared/                   # Shared utilities across all services
@@ -218,17 +216,16 @@ This simulates a user conversation covering:
 - QR code issuance (sent via SMS)
 - Complaint filing (with upload link via SMS)
 
-### 3) Open dashboards
+### 3) Open dashboard
 
-- JSON Admin Dashboard:
-  http://localhost:8013/status
-
-- Optional Live Monitoring UI (dark theme):
+- Live Monitoring UI (dark theme):
   http://localhost:8014
   - Live service status cards
   - Streaming logs
   - Time-range selectors
-  - Graphs (e.g., DB calls, calls received, SMS sent)
+  - Call metrics and active calls
+  - Voice and LLM testing tools
+  - Conversation history viewer
 
 ### 4) Verify health, logs, metrics
 
@@ -242,9 +239,9 @@ This simulates a user conversation covering:
   curl -s "http://localhost:8012/logs?limit=100" | python3 -m json.tool
   ```
 
-- Metrics (past 60 minutes):
+- Metrics from dashboard UI:
   ```bash
-  curl -s "http://localhost:8013/metrics?time_period_minutes=60" | python3 -m json.tool
+  curl -s "http://localhost:8014/api/metrics/handler?period=60" | python3 -m json.tool
   ```
 
 ### 5) Stop services
@@ -268,7 +265,6 @@ Service bootstrap (abbrev.):
 [ok] complaint (8010)
 [ok] qr (8011)
 [ok] handler (8012)
-[ok] dashboard (8013)
 [ok] dashboard_ui (8014)
 All services healthy.
 ```
