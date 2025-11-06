@@ -114,6 +114,12 @@ async def get_dashboard():
     return HTML_TEMPLATE
 
 
+@app.get("/voice-test", response_class=HTMLResponse)
+async def get_voice_test():
+    """Serve the voice testing page with live transcription."""
+    return VOICE_TEST_HTML
+
+
 # Dark-themed dashboard HTML with live updates
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -372,6 +378,11 @@ HTML_TEMPLATE = """
             Real-time monitoring and metrics
             <span class="connection-status" id="wsStatus"></span>
         </div>
+        <div style="margin-top: 15px;">
+            <a href="/voice-test" style="background: rgba(88, 166, 255, 0.2); padding: 8px 16px; border-radius: 6px; color: #58a6ff; text-decoration: none; border: 1px solid #58a6ff;">
+                🎤 Test Voice & Live Transcription
+            </a>
+        </div>
     </div>
     
     <div class="dashboard-grid">
@@ -572,6 +583,593 @@ HTML_TEMPLATE = """
         connectWebSocket();
         initChart();
         refreshChart();
+    </script>
+</body>
+</html>
+"""
+
+
+# Voice Testing HTML with Live Transcription
+VOICE_TEST_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Testing - Live Transcription</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1f6feb 0%, #0d419d 100%);
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        
+        h1 {
+            color: white;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .card h2 {
+            color: #58a6ff;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        
+        .control-section {
+            margin-bottom: 30px;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #8b949e;
+            font-weight: 500;
+        }
+        
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        button {
+            background: #238636;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background: #2ea043;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(35, 134, 54, 0.4);
+        }
+        
+        button:disabled {
+            background: #30363d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        button.secondary {
+            background: #1f6feb;
+        }
+        
+        button.secondary:hover {
+            background: #388bfd;
+        }
+        
+        button.danger {
+            background: #da3633;
+        }
+        
+        button.danger:hover {
+            background: #e5534b;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background: #da3633;
+        }
+        
+        .status-indicator.recording {
+            background: #da3633;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .status-indicator.connected {
+            background: #238636;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .transcription-box {
+            background: #0d1117;
+            border: 2px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 200px;
+            margin-top: 20px;
+        }
+        
+        .transcript-item {
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 6px;
+            background: #161b22;
+        }
+        
+        .transcript-item.partial {
+            border-left: 3px solid #d29922;
+            opacity: 0.7;
+        }
+        
+        .transcript-item.final {
+            border-left: 3px solid #238636;
+        }
+        
+        .timestamp {
+            color: #8b949e;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        
+        .text {
+            color: #c9d1d9;
+            font-size: 16px;
+        }
+        
+        .audio-controls {
+            margin-top: 20px;
+        }
+        
+        audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+        
+        .status-message {
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+        }
+        
+        .status-message.success {
+            background: rgba(35, 134, 54, 0.2);
+            border: 1px solid #238636;
+            color: #238636;
+        }
+        
+        .status-message.error {
+            background: rgba(218, 54, 51, 0.2);
+            border: 1px solid #da3633;
+            color: #da3633;
+        }
+        
+        .status-message.info {
+            background: rgba(88, 166, 255, 0.2);
+            border: 1px solid #58a6ff;
+            color: #58a6ff;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #58a6ff;
+            text-decoration: none;
+        }
+        
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <a href="/" class="back-link">← Back to Dashboard</a>
+    
+    <div class="header">
+        <h1>🎤 Voice Testing - Live Transcription</h1>
+        <div class="subtitle">Test TTS and real-time speech recognition</div>
+    </div>
+    
+    <div class="card">
+        <h2>1. Text-to-Speech (TTS)</h2>
+        <div class="control-section">
+            <div class="input-group">
+                <label for="ttsInput">Enter text to convert to speech:</label>
+                <textarea id="ttsInput" placeholder="Type something...">Hello, this is a test of the text to speech system. How are you doing today?</textarea>
+            </div>
+            <button id="synthesizeBtn" onclick="synthesizeSpeech()">🔊 Generate Speech</button>
+            <div id="ttsStatus"></div>
+            <div id="audioContainer" class="audio-controls"></div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>2. Live Transcription (Speech-to-Text)</h2>
+        <div class="control-section">
+            <div style="margin-bottom: 20px;">
+                <span class="status-indicator" id="wsIndicator"></span>
+                <span id="wsStatus">Not Connected</span>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <button id="startMicBtn" onclick="startMicrophone()" class="secondary">
+                    🎤 Start Microphone
+                </button>
+                <button id="stopMicBtn" onclick="stopMicrophone()" class="danger" disabled>
+                    ⏹ Stop Microphone
+                </button>
+                <button onclick="testWithGeneratedAudio()" style="margin-left: 20px;">
+                    🔄 Test with Generated Audio
+                </button>
+                <button onclick="clearTranscripts()">🗑️ Clear</button>
+            </div>
+            
+            <div id="liveStatus"></div>
+            
+            <div class="transcription-box" id="transcriptionBox">
+                <div style="color: #8b949e; text-align: center;">
+                    Transcriptions will appear here...
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let wsConnection = null;
+        let mediaRecorder = null;
+        let audioContext = null;
+        let generatedAudioBase64 = null;
+        let currentAudioElement = null;
+        
+        // Connect to voice service WebSocket
+        function connectWebSocket() {
+            const wsUrl = 'ws://localhost:8001/live-transcribe';
+            
+            try {
+                wsConnection = new WebSocket(wsUrl);
+                
+                wsConnection.onopen = () => {
+                    console.log('WebSocket connected');
+                    document.getElementById('wsIndicator').classList.add('connected');
+                    document.getElementById('wsStatus').textContent = 'Connected to Voice Service';
+                    showStatus('liveStatus', 'Connected to live transcription service', 'success');
+                };
+                
+                wsConnection.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    document.getElementById('wsIndicator').classList.remove('connected');
+                    document.getElementById('wsStatus').textContent = 'Disconnected';
+                    showStatus('liveStatus', 'Disconnected from service', 'error');
+                    
+                    // Try to reconnect after 3 seconds
+                    setTimeout(connectWebSocket, 3000);
+                };
+                
+                wsConnection.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    console.log('Received:', msg);
+                    
+                    if (msg.type === 'partial') {
+                        addTranscript(msg.text, 'partial', msg.timestamp);
+                    } else if (msg.type === 'final') {
+                        addTranscript(msg.text, 'final', msg.timestamp);
+                    } else if (msg.type === 'error') {
+                        showStatus('liveStatus', `Error: ${msg.error}`, 'error');
+                    }
+                };
+                
+                wsConnection.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    showStatus('liveStatus', 'WebSocket connection error', 'error');
+                };
+                
+            } catch (err) {
+                console.error('Failed to connect:', err);
+                showStatus('liveStatus', 'Failed to connect to voice service', 'error');
+            }
+        }
+        
+        // Synthesize speech
+        async function synthesizeSpeech() {
+            const text = document.getElementById('ttsInput').value;
+            if (!text.trim()) {
+                showStatus('ttsStatus', 'Please enter some text', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('synthesizeBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Generating...';
+            
+            try {
+                const response = await fetch('http://localhost:8001/synthesize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                generatedAudioBase64 = data.audio_bytes;
+                
+                // Create audio element
+                const audioBlob = base64ToBlob(data.audio_bytes, 'audio/wav');
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                const container = document.getElementById('audioContainer');
+                container.innerHTML = `
+                    <audio controls id="generatedAudio">
+                        <source src="${audioUrl}" type="audio/wav">
+                    </audio>
+                `;
+                
+                currentAudioElement = document.getElementById('generatedAudio');
+                
+                showStatus('ttsStatus', '✓ Audio generated successfully! You can now test it with live transcription.', 'success');
+                
+            } catch (err) {
+                console.error('TTS error:', err);
+                showStatus('ttsStatus', `Error: ${err.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔊 Generate Speech';
+            }
+        }
+        
+        // Start microphone recording
+        async function startMicrophone() {
+            if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
+                showStatus('liveStatus', 'Please wait for WebSocket connection', 'error');
+                return;
+            }
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    if (wsConnection.readyState === WebSocket.OPEN) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const pcm16 = floatTo16BitPCM(inputData);
+                        wsConnection.send(pcm16);
+                    }
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                mediaRecorder = { stream, processor, source };
+                
+                document.getElementById('startMicBtn').disabled = true;
+                document.getElementById('stopMicBtn').disabled = false;
+                document.getElementById('wsIndicator').classList.add('recording');
+                
+                showStatus('liveStatus', '🎤 Recording... Speak now!', 'info');
+                
+            } catch (err) {
+                console.error('Microphone error:', err);
+                showStatus('liveStatus', `Microphone error: ${err.message}`, 'error');
+            }
+        }
+        
+        // Stop microphone recording
+        function stopMicrophone() {
+            if (mediaRecorder) {
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                mediaRecorder.processor.disconnect();
+                mediaRecorder.source.disconnect();
+                if (audioContext) {
+                    audioContext.close();
+                }
+                mediaRecorder = null;
+            }
+            
+            if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+                wsConnection.send(JSON.stringify({ type: 'stop' }));
+            }
+            
+            document.getElementById('startMicBtn').disabled = false;
+            document.getElementById('stopMicBtn').disabled = true;
+            document.getElementById('wsIndicator').classList.remove('recording');
+            
+            showStatus('liveStatus', 'Recording stopped', 'info');
+        }
+        
+        // Test with generated audio
+        async function testWithGeneratedAudio() {
+            if (!generatedAudioBase64) {
+                showStatus('liveStatus', 'Please generate audio first using TTS above', 'error');
+                return;
+            }
+            
+            if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
+                showStatus('liveStatus', 'Please wait for WebSocket connection', 'error');
+                return;
+            }
+            
+            try {
+                // Convert WAV to PCM16
+                const audioBlob = base64ToBlob(generatedAudioBase64, 'audio/wav');
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const pcmData = extractPCMFromWAV(arrayBuffer);
+                
+                showStatus('liveStatus', 'Sending audio for transcription...', 'info');
+                
+                // Send audio data
+                wsConnection.send(pcmData);
+                
+                // Stop after a delay
+                setTimeout(() => {
+                    wsConnection.send(JSON.stringify({ type: 'stop' }));
+                    showStatus('liveStatus', 'Audio sent. Waiting for transcription...', 'info');
+                }, 2000);
+                
+                // Also play the audio
+                if (currentAudioElement) {
+                    currentAudioElement.play();
+                }
+                
+            } catch (err) {
+                console.error('Test error:', err);
+                showStatus('liveStatus', `Error: ${err.message}`, 'error');
+            }
+        }
+        
+        // Add transcript to display
+        function addTranscript(text, type, timestamp) {
+            const box = document.getElementById('transcriptionBox');
+            
+            // Remove placeholder
+            if (box.querySelector('[style*="text-align: center"]')) {
+                box.innerHTML = '';
+            }
+            
+            const item = document.createElement('div');
+            item.className = `transcript-item ${type}`;
+            item.innerHTML = `
+                <div class="timestamp">${new Date(timestamp).toLocaleTimeString()} - ${type.toUpperCase()}</div>
+                <div class="text">${text}</div>
+            `;
+            
+            box.appendChild(item);
+            box.scrollTop = box.scrollHeight;
+        }
+        
+        // Clear transcripts
+        function clearTranscripts() {
+            const box = document.getElementById('transcriptionBox');
+            box.innerHTML = '<div style="color: #8b949e; text-align: center;">Transcriptions will appear here...</div>';
+        }
+        
+        // Show status message
+        function showStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status-message ${type}">${message}</div>`;
+        }
+        
+        // Helper: Convert base64 to Blob
+        function base64ToBlob(base64, mimeType) {
+            const byteCharacters = atob(base64);
+            const byteArrays = [];
+            
+            for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+                const slice = byteCharacters.slice(offset, offset + 512);
+                const byteNumbers = new Array(slice.length);
+                for (let i = 0; i < slice.length; i++) {
+                    byteNumbers[i] = slice.charCodeAt(i);
+                }
+                byteArrays.push(new Uint8Array(byteNumbers));
+            }
+            
+            return new Blob(byteArrays, { type: mimeType });
+        }
+        
+        // Helper: Extract PCM from WAV
+        function extractPCMFromWAV(arrayBuffer) {
+            const view = new DataView(arrayBuffer);
+            let offset = 12;
+            
+            while (offset < view.byteLength) {
+                const chunkId = String.fromCharCode(
+                    view.getUint8(offset),
+                    view.getUint8(offset + 1),
+                    view.getUint8(offset + 2),
+                    view.getUint8(offset + 3)
+                );
+                const chunkSize = view.getUint32(offset + 4, true);
+                
+                if (chunkId === 'data') {
+                    return new Uint8Array(arrayBuffer, offset + 8, chunkSize);
+                }
+                
+                offset += 8 + chunkSize;
+            }
+            
+            // Fallback: standard 44-byte header
+            return new Uint8Array(arrayBuffer, 44);
+        }
+        
+        // Helper: Convert Float32 to PCM16
+        function floatTo16BitPCM(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            let offset = 0;
+            for (let i = 0; i < float32Array.length; i++, offset += 2) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buffer;
+        }
+        
+        // Initialize
+        connectWebSocket();
     </script>
 </body>
 </html>
