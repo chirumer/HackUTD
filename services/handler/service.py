@@ -7,11 +7,13 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from typing import Optional
 import requests
 import time
+import asyncio
+import json
 from shared.config import get_service_url
 from shared.utils.intent import classify_intent
 from shared.utils.logger import ServiceLogger
@@ -257,6 +259,95 @@ def handle_text(req: HandleRequest):
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "handler"}
+
+
+@app.websocket("/call/stream")
+async def call_stream_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for handling call audio streams.
+    Receives audio from call service, forwards to voice service for transcription, and logs results.
+    """
+    await websocket.accept()
+    logger.info("Call service connected for audio streaming")
+    
+    voice_ws = None
+    call_sid = None
+    phone = None
+    
+    try:
+        # Import websockets library
+        import websockets
+        
+        # Connect to voice service
+        voice_ws_url = VOICE_URL.replace('http', 'ws') + '/live-transcribe'
+        logger.info(f"Connecting to voice service: {voice_ws_url}")
+        
+        voice_ws = await websockets.connect(voice_ws_url)
+        logger.info("Connected to voice service for transcription")
+        
+        async def forward_from_call_to_voice():
+            """Forward audio from call service to voice service"""
+            try:
+                while True:
+                    data = await websocket.receive()
+                    
+                    if 'bytes' in data:
+                        # Audio data - forward to voice service
+                        await voice_ws.send(data['bytes'])
+                    elif 'text' in data:
+                        # Control message
+                        msg = json.loads(data['text'])
+                        if msg.get('type') == 'start':
+                            nonlocal call_sid, phone
+                            call_sid = msg.get('call_sid')
+                            phone = msg.get('phone')
+                            logger.info(f"Transcription started for call {call_sid}", call_sid=call_sid, phone=phone)
+                        elif msg.get('type') == 'stop':
+                            logger.info(f"Transcription stopped for call {call_sid}", call_sid=call_sid)
+                            await voice_ws.send(json.dumps({'type': 'stop'}))
+                            break
+            except WebSocketDisconnect:
+                logger.info("Call service disconnected")
+            except Exception as e:
+                logger.error(f"Error forwarding to voice: {e}")
+        
+        async def forward_from_voice_to_call():
+            """Forward transcription results from voice service to call service"""
+            try:
+                async for message in voice_ws:
+                    data = json.loads(message)
+                    
+                    if data.get('type') == 'partial':
+                        # Log partial transcription
+                        logger.info(f"[PARTIAL] \"{data.get('text')}\"", call_sid=call_sid, phone=phone)
+                        # Forward to call service
+                        await websocket.send_json(data)
+                    
+                    elif data.get('type') == 'final':
+                        # Log final transcription
+                        logger.info(f"[FINAL SENTENCE] \"{data.get('text')}\"", call_sid=call_sid, phone=phone)
+                        metrics.increment("transcriptions_completed")
+                        # Forward to call service
+                        await websocket.send_json(data)
+                    
+                    elif data.get('type') == 'error':
+                        logger.error(f"Transcription error: {data.get('error')}", call_sid=call_sid)
+                        await websocket.send_json(data)
+            except Exception as e:
+                logger.error(f"Error forwarding from voice: {e}")
+        
+        # Run both forwarding tasks concurrently
+        await asyncio.gather(
+            forward_from_call_to_voice(),
+            forward_from_voice_to_call()
+        )
+        
+    except Exception as e:
+        logger.error(f"Live transcription error: {e}")
+    finally:
+        if voice_ws:
+            await voice_ws.close()
+        logger.info("Live transcription session ended", call_sid=call_sid)
 
 
 @app.post("/call/initiate")

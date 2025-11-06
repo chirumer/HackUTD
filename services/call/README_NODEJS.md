@@ -15,13 +15,15 @@ Twilio-based call handling service that receives phone calls, performs live tran
 
 1. **Call Received**: Twilio receives a call and sends webhook to `/voice-webhook`
 2. **WebSocket Stream**: Twilio streams audio to `/media-stream` via WebSocket
-3. **Live Transcription**: Audio is forwarded to voice service for transcription
-4. **Partial Logging**: Partial transcriptions are logged in real-time
-5. **Sentence Complete**: When a complete sentence is detected:
-   - Log the final sentence
-   - Forward to handler service
+3. **Audio Processing**: Convert mulaw → PCM16, resample 8kHz → 16kHz
+4. **Forward to Handler**: Audio is forwarded to handler service via WebSocket
+5. **Handler to Voice**: Handler forwards audio to voice service for transcription
+6. **Transcription Logging**: Handler logs partial and final transcriptions
+7. **Results to Call**: Handler sends transcription results back to call service
+8. **Sentence Complete**: When a complete sentence is detected:
+   - Forward to handler service for intent processing
    - End the call gracefully
-6. **Cleanup**: Close connections and remove from active calls
+9. **Cleanup**: Close connections and remove from active calls
 
 ## Setup
 

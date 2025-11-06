@@ -359,17 +359,24 @@ wss.on('connection', (ws, req) => {
     return pcm16k;
   };
 
-  // Connect to voice service for live transcription
+  // Connect to handler service for live transcription (handler connects to voice service)
   const connectToVoiceService = () => {
     try {
       const WebSocket = require('ws');
-      const voiceWsUrl = VOICE_URL.replace('http', 'ws') + '/live-transcribe';
+      const handlerWsUrl = HANDLER_URL.replace('http', 'ws') + '/call/stream';
       
-      log('INFO', `[WS] Connecting to voice service: ${voiceWsUrl}`);
-      voiceWs = new WebSocket(voiceWsUrl);
+      log('INFO', `[WS] Connecting to handler service: ${handlerWsUrl}`);
+      voiceWs = new WebSocket(handlerWsUrl);
       
       voiceWs.on('open', () => {
-        log('INFO', '[WS] Connected to voice service');
+        log('INFO', '[WS] Connected to handler service for live transcription');
+        
+        // Send start message with call metadata
+        voiceWs.send(JSON.stringify({
+          type: 'start',
+          call_sid: callSid,
+          phone: callerPhone
+        }));
         
         // Store voice WebSocket reference
         const wsRefs = activeWebSockets.get(callSid);
@@ -383,12 +390,7 @@ wss.on('connection', (ws, req) => {
           const message = JSON.parse(data.toString());
           
           if (message.type === 'partial') {
-            // Log partial transcription
-            log('INFO', `[PARTIAL] "${message.text}"`, { 
-              callSid: callSid,
-              phone: callerPhone 
-            });
-            
+            // Partial transcription from handler (handler already logged it)
             if (activeCalls.has(callSid)) {
               const call = activeCalls.get(callSid);
               call.partials.push({
@@ -400,12 +402,7 @@ wss.on('connection', (ws, req) => {
             currentSentence = message.text;
           } 
           else if (message.type === 'final') {
-            // Complete sentence detected
-            log('INFO', `[FINAL SENTENCE] "${message.text}"`, { 
-              callSid: callSid,
-              phone: callerPhone 
-            });
-            
+            // Complete sentence detected (handler already logged it)
             fullTranscript += message.text + ' ';
             
             if (activeCalls.has(callSid)) {
@@ -413,7 +410,7 @@ wss.on('connection', (ws, req) => {
               call.transcript = fullTranscript.trim();
             }
             
-            // Forward to handler service
+            // Forward to handler service for intent processing
             forwardToHandler(callSid, callerPhone, message.text);
             
             // End the call after receiving a complete sentence
@@ -422,19 +419,19 @@ wss.on('connection', (ws, req) => {
             }, 1000);
           }
         } catch (err) {
-          log('ERROR', '[WS] Error processing voice service message', { error: err.message });
+          log('ERROR', '[WS] Error processing handler service message', { error: err.message });
         }
       });
       
       voiceWs.on('error', (err) => {
-        log('ERROR', '[WS] Voice service error', { error: err.message });
+        log('ERROR', '[WS] Handler service error', { error: err.message });
       });
       
       voiceWs.on('close', () => {
-        log('INFO', '[WS] Voice service connection closed');
+        log('INFO', '[WS] Handler service connection closed');
       });
     } catch (err) {
-      log('ERROR', '[WS] Failed to connect to voice service', { error: err.message });
+      log('ERROR', '[WS] Failed to connect to handler service', { error: err.message });
     }
   };
   
@@ -552,8 +549,14 @@ wss.on('connection', (ws, req) => {
       // Clean up WebSocket connections
       if (wsRefs) {
         if (wsRefs.voiceWs && wsRefs.voiceWs.readyState === 1) {
+          // Send stop message before closing
+          try {
+            wsRefs.voiceWs.send(JSON.stringify({ type: 'stop' }));
+          } catch (e) {
+            // Ignore if already closed
+          }
           wsRefs.voiceWs.close();
-          log('INFO', '[CALL] Voice WebSocket closed', { callSid: callSid });
+          log('INFO', '[CALL] Handler WebSocket closed', { callSid: callSid });
         }
         if (wsRefs.twilioWs && wsRefs.twilioWs.readyState === 1) {
           wsRefs.twilioWs.close();
