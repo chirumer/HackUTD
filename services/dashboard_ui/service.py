@@ -118,6 +118,48 @@ async def get_service_metrics(service_name: str, period: int = 60):
         return {"error": "Service unavailable"}
 
 
+@app.post("/api/voice/transcribe")
+async def proxy_voice_transcribe(request_data: dict):
+    """Proxy transcription requests to Voice service."""
+    try:
+        resp = requests.post(
+            "http://localhost:8001/transcribe",
+            json=request_data,
+            timeout=30
+        )
+        return resp.json() if resp.status_code == 200 else {"error": resp.text}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/voice/synthesize")
+async def proxy_voice_synthesize(request_data: dict):
+    """Proxy synthesis requests to Voice service."""
+    try:
+        resp = requests.post(
+            "http://localhost:8001/synthesize",
+            json=request_data,
+            timeout=30
+        )
+        return resp.json() if resp.status_code == 200 else {"error": resp.text}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/llm/answer")
+async def proxy_llm_answer(request_data: dict):
+    """Proxy LLM answer requests to LLM service."""
+    try:
+        resp = requests.post(
+            "http://localhost:8004/answer",
+            json=request_data,
+            timeout=30
+        )
+        return resp.json() if resp.status_code == 200 else {"error": resp.text}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def get_dashboard():
     """Serve the dashboard HTML."""
@@ -578,8 +620,9 @@ HTML_TEMPLATE = """
         let audioChunks = [];
         let isRecording = false;
         
-        const VOICE_API = 'http://localhost:8001';
-        const LLM_API = 'http://localhost:8004';
+        // Use dashboard proxy endpoints instead of direct service calls
+        const VOICE_API = '/api/voice';
+        const LLM_API = '/api/llm';
         
         // Voice Service Testing
         async function startRecording() {
