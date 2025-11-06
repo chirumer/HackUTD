@@ -11,23 +11,24 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from bankassist.config import SERVICE_PORTS
+from shared.config import SERVICE_PORTS
 
+# List of all services in the new services/ directory
 SERVICES = [
-    "voice_service.py",
-    "sms_service.py",
-    "call_service.py",
-    "llm_service.py",
-    "rag_service.py",
-    "fraud_service.py",
-    "db_service.py",
-    "readquery_service.py",
-    "writeops_service.py",
-    "complaint_service.py",
-    "qr_service.py",
-    "handler_service.py",
-    "dashboard_service.py",
-    "dashboard_ui_service.py",
+    "voice",
+    "sms",
+    "call",
+    "llm",
+    "rag",
+    "fraud",
+    "database",
+    "readquery",
+    "writeops",
+    "complaint",
+    "qr",
+    "handler",
+    "dashboard",
+    "dashboard_ui",
 ]
 
 processes = []
@@ -35,7 +36,7 @@ processes = []
 
 def start_services():
     """Start all services in background."""
-    services_dir = project_root / "services_http"
+    services_base_dir = project_root / "services"
     
     # Set PYTHONPATH to include project root
     env = os.environ.copy()
@@ -44,16 +45,13 @@ def start_services():
     print("🚀 Starting all services...")
     print("-" * 60)
     
-    for service_file in SERVICES:
-        service_path = services_dir / service_file
-        # Map service file name to config name
-        service_name = service_file.replace("_service.py", "")
-        if service_name == "db":
-            service_name = "database"
-        elif service_name == "writeops":
-            service_name = "write_ops"
-        elif service_name == "dashboard_ui":
-            pass  # Keep as is
+    for service_name in SERVICES:
+        service_dir = services_base_dir / service_name
+        service_path = service_dir / "service.py"
+        
+        if not service_path.exists():
+            print(f"⚠️  Warning: {service_path} not found, skipping...")
+            continue
         
         port = SERVICE_PORTS.get(service_name)
         

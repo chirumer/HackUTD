@@ -67,35 +67,64 @@ The Handler is the orchestrator that:
 ## Project Layout
 
 ```
-bankassist/
-  services/            # Core business logic for each capability
-  utils/               # Intent classification, logging, metrics (if present)
-  config.py            # Service port configuration
+services/                  # Individual microservices (isolated)
+├── voice/                # Port 8001 - STT/TTS service
+│   ├── .env.example
+│   ├── config.py         # Service-specific configuration
+│   ├── service.py        # FastAPI application
+│   └── README.md
+├── sms/                  # Port 8002 - SMS messaging
+├── call/                 # Port 8003 - Call management
+├── llm/                  # Port 8004 - General Q&A
+├── rag/                  # Port 8005 - Product/offers queries
+├── fraud/                # Port 8006 - Fraud detection
+├── database/             # Port 8007 - In-memory database
+├── readquery/            # Port 8008 - NL→SQL reads
+├── writeops/             # Port 8009 - Write operations
+├── complaint/            # Port 8010 - Complaint filing
+├── qr/                   # Port 8011 - QR code generation
+├── handler/              # Port 8012 - Main orchestrator
+├── dashboard/            # Port 8013 - Admin JSON API
+└── dashboard_ui/         # Port 8014 - Live monitoring UI
 
-services_http/         # FastAPI microservices (HTTP API layer)
-  voice_service.py         # 8001
-  sms_service.py           # 8002
-  call_service.py          # 8003
-  llm_service.py           # 8004
-  rag_service.py           # 8005
-  fraud_service.py         # 8006
-  db_service.py            # 8007
-  readquery_service.py     # 8008
-  writeops_service.py      # 8009
-  complaint_service.py     # 8010
-  qr_service.py            # 8011
-  handler_service.py       # 8012
-  dashboard_service.py     # 8013
-  dashboard_ui_service.py  # 8014 (optional, live monitoring UI)
+shared/                   # Shared utilities across all services
+├── config.py             # Central port configuration
+├── utils/
+│   ├── logger.py         # Structured logging utility
+│   ├── metrics.py        # Metrics collection utility
+│   └── intent.py         # Intent classification
 
-start_services.py      # Boot all services and run health checks
-demo_client.py         # End-to-end demo driver
-requirements.txt       # Python dependencies
-logs/                  # Service logs (auto-generated)
-ARCHITECTURE.md        # Service diagrams & flows
-API_EXAMPLES.md        # API testing examples
-README.md              # This file
+bankassist/               # Core business logic layer
+├── services/             # Service implementations
+│   ├── voice.py
+│   ├── sms.py
+│   ├── call.py
+│   └── ...               # Other service logic
+
+start_services.py         # Boot all services and run health checks
+demo_client.py            # End-to-end demo driver
+requirements.txt          # Python dependencies
+logs/                     # Service logs (auto-generated)
+ARCHITECTURE.md           # Service diagrams & flows
+API_EXAMPLES.md           # API testing examples
+MONITORING.md             # Monitoring and observability guide
+README.md                 # This file
 ```
+
+### Service Organization
+
+Each service is **fully isolated** in its own folder with:
+- `.env.example` - Environment variable template
+- `config.py` - Loads .env and provides configuration
+- `service.py` - FastAPI application
+- `README.md` - Service-specific documentation
+
+This structure allows:
+- ✅ **Independent configuration** - Each service has its own .env file
+- ✅ **Easy containerization** - Each service can have its own Dockerfile
+- ✅ **Clear ownership** - Services are self-contained units
+- ✅ **Simple extraction** - Easy to move services to separate repos
+- ✅ **Team scalability** - Different teams can own different services
 
 ## Setup
 
@@ -116,6 +145,32 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip3 install -r requirements.txt
 ```
+
+### Environment Configuration (Optional)
+
+Each service can be configured with its own `.env` file. Copy the template and customize:
+
+```bash
+# Configure all services at once
+for service in services/*/; do
+  cp "$service/.env.example" "$service/.env"
+done
+
+# Or configure individual services
+cp services/voice/.env.example services/voice/.env
+cp services/llm/.env.example services/llm/.env
+# Edit each .env file with your API keys and configuration
+```
+
+**Example configurations:**
+
+For production use with real APIs:
+- `services/voice/.env` - Add Azure Speech API credentials
+- `services/llm/.env` - Add OpenAI API key
+- `services/sms/.env` - Add Twilio credentials
+- `services/fraud/.env` - Adjust fraud detection thresholds
+
+See each service's README for specific environment variables.
 
 ## Running the Application
 
