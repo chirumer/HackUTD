@@ -11,6 +11,7 @@ app = FastAPI(title="Handler Service")
 # Service URLs
 VOICE_URL = get_service_url("voice")
 SMS_URL = get_service_url("sms")
+CALL_URL = get_service_url("call")
 LLM_URL = get_service_url("llm")
 RAG_URL = get_service_url("rag")
 READQUERY_URL = get_service_url("readquery")
@@ -230,6 +231,33 @@ def handle_text(req: HandleRequest):
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "handler"}
+
+
+@app.post("/call/initiate")
+def initiate_call(phone: str):
+    """Initiate an outbound call to a customer."""
+    resp = requests.post(f"{CALL_URL}/initiate", json={"phone": phone})
+    resp.raise_for_status()
+    return resp.json()
+
+
+@app.post("/call/receive")
+def receive_call(phone: str):
+    """Receive an inbound call from a customer."""
+    resp = requests.post(f"{CALL_URL}/receive", json={"phone": phone})
+    resp.raise_for_status()
+    call = resp.json()
+    # Auto-answer the call
+    requests.post(f"{CALL_URL}/answer", json={"call_id": call["call_id"]})
+    return call
+
+
+@app.post("/call/end")
+def end_call(call_id: str, transcript: str = ""):
+    """End a call and store transcript."""
+    resp = requests.post(f"{CALL_URL}/end", json={"call_id": call_id, "transcript": transcript})
+    resp.raise_for_status()
+    return resp.json()
 
 
 if __name__ == "__main__":

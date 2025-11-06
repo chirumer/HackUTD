@@ -7,6 +7,7 @@ from bankassist.config import get_service_url
 HANDLER_URL = get_service_url("handler")
 DASHBOARD_URL = get_service_url("dashboard")
 SMS_URL = get_service_url("sms")
+CALL_URL = get_service_url("call")
 
 
 def demo_conversation():
@@ -15,6 +16,24 @@ def demo_conversation():
     # User info
     phone = "+15551234567"
     account_id = "alice"
+    
+    print("\n" + "=" * 70)
+    print("🎤 VOICE BANKING DEMO - HTTP Microservices Architecture")
+    print("=" * 70)
+    print(f"\nCaller: {phone}")
+    print(f"Account: {account_id}\n")
+    
+    # Initiate call
+    print("📞 Initiating call...")
+    try:
+        call_resp = requests.post(f"{HANDLER_URL}/call/receive", params={"phone": phone}, timeout=2)
+        call_resp.raise_for_status()
+        call_data = call_resp.json()
+        call_id = call_data["call_id"]
+        print(f"✓ Call connected (ID: {call_id})\n")
+    except:
+        print("⚠️  Could not initiate call tracking (continuing anyway)\n")
+        call_id = None
     
     conversations = [
         "Hello, can you help me?",
@@ -56,6 +75,16 @@ def demo_conversation():
             print("\n⚠️  Make sure all services are running: python3 start_services.py")
             return
     
+    # End call
+    if call_id:
+        print("\n📞 Ending call...")
+        try:
+            full_transcript = " | ".join(conversations)
+            requests.post(f"{HANDLER_URL}/call/end", params={"call_id": call_id, "transcript": full_transcript}, timeout=2)
+            print(f"✓ Call ended (ID: {call_id})")
+        except:
+            pass
+    
     # Show SMS outbox
     print("\n" + "=" * 70)
     print("📱 SMS OUTBOX")
@@ -77,6 +106,12 @@ def demo_conversation():
         sms = dashboard.get("sms", {})
         print(f"  Outbox: {sms.get('outbox_count', 0)} messages")
         print(f"  Inbox:  {sms.get('inbox_count', 0)} messages")
+        
+        print("\nCall Service:")
+        call = dashboard.get("call", {})
+        print(f"  Active calls:   {call.get('active_calls', 0)}")
+        print(f"  Total calls:    {call.get('total_calls', 0)}")
+        print(f"  Avg duration:   {call.get('avg_duration_seconds', 0)}s")
         
         print("\nFraud Detection:")
         fraud = dashboard.get("fraud", {})

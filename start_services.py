@@ -16,6 +16,7 @@ from bankassist.config import SERVICE_PORTS
 SERVICES = [
     "voice_service.py",
     "sms_service.py",
+    "call_service.py",
     "llm_service.py",
     "rag_service.py",
     "fraud_service.py",
@@ -72,8 +73,8 @@ def start_services():
     for name, port, _ in processes:
         print(f"  {name:12} → http://localhost:{port}")
     
-    print("\n📊 Dashboard: http://localhost:8012/status")
-    print("🎯 Handler:   http://localhost:8011/handle")
+    print("\n📊 Dashboard: http://localhost:8013/status")
+    print("🎯 Handler:   http://localhost:8012/handle")
     print("\nPress Ctrl+C to stop all services")
 
 

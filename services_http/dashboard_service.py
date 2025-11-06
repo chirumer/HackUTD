@@ -10,6 +10,7 @@ app = FastAPI(title="Dashboard Service")
 def status():
     """Aggregate status from all services."""
     sms_url = get_service_url("sms")
+    call_url = get_service_url("call")
     fraud_url = get_service_url("fraud")
     complaint_url = get_service_url("complaint")
     
@@ -17,6 +18,11 @@ def status():
         sms_stats = requests.get(f"{sms_url}/stats").json()
     except:
         sms_stats = {"error": "unavailable"}
+    
+    try:
+        call_stats = requests.get(f"{call_url}/stats").json()
+    except:
+        call_stats = {"error": "unavailable"}
     
     try:
         fraud_stats = requests.get(f"{fraud_url}/stats").json()
@@ -34,6 +40,7 @@ def status():
     
     return {
         "sms": sms_stats,
+        "call": call_stats,
         "fraud": fraud_stats,
         "complaints": complaint_stats,
         "db": {"note": "redacted for security"},

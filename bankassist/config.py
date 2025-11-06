@@ -3,16 +3,17 @@
 SERVICE_PORTS = {
     "voice": 8001,
     "sms": 8002,
-    "llm": 8003,
-    "rag": 8004,
-    "fraud": 8005,
-    "db": 8006,
-    "readquery": 8007,
-    "writeops": 8008,
-    "complaint": 8009,
-    "qr": 8010,
-    "handler": 8011,
-    "dashboard": 8012,
+    "call": 8003,
+    "llm": 8004,
+    "rag": 8005,
+    "fraud": 8006,
+    "db": 8007,
+    "readquery": 8008,
+    "writeops": 8009,
+    "complaint": 8010,
+    "qr": 8011,
+    "handler": 8012,
+    "dashboard": 8013,
 }
 
 def get_service_url(service_name: str) -> str:

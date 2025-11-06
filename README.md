@@ -10,16 +10,17 @@ Each service runs on its own port and communicates via HTTP:
 
 - **Voice Service** (port 8001): STT and TTS conversion (simulated Azure Voice)
 - **SMS Service** (port 8002): Send/receive SMS, OTPs, media
-- **LLM Service** (port 8003): General Q&A with context
-- **RAG Service** (port 8004): Product/offers queries from bank documents
-- **Fraud Detection** (port 8005): Consent gate for writes, alerts
-- **Database Service** (port 8006): In-memory transactions and balances
-- **Read Query Service** (port 8007): NL→SQL reads with verification
-- **Write Operations** (port 8008): Transfers with fraud consent
-- **Complaint Service** (port 8009): Lodge complaints with photos
-- **QR Code Service** (port 8010): Generate payment QR codes
-- **Handler Service** (port 8011): **Orchestrator** - routes intents, manages sessions
-- **Dashboard Service** (port 8012): Admin view aggregating all service stats
+- **Call Service** (port 8003): Manage phone calls, track call history
+- **LLM Service** (port 8004): General Q&A with context
+- **RAG Service** (port 8005): Product/offers queries from bank documents
+- **Fraud Detection** (port 8006): Consent gate for writes, alerts
+- **Database Service** (port 8007): In-memory transactions and balances
+- **Read Query Service** (port 8008): NL→SQL reads with verification
+- **Write Operations** (port 8009): Transfers with fraud consent
+- **Complaint Service** (port 8010): Lodge complaints with photos
+- **QR Code Service** (port 8011): Generate payment QR codes
+- **Handler Service** (port 8012): **Orchestrator** - routes intents, manages sessions
+- **Dashboard Service** (port 8013): Admin view aggregating all service stats
 
 ### Communication Flow
 
@@ -46,19 +47,20 @@ bankassist/
                       Used by HTTP services as their backend
   utils/             - Intent classifier
   config.py          - Service port configuration
-services_http/       - FastAPI microservice HTTP APIs (12 services)
+services_http/       - FastAPI microservice HTTP APIs (13 services)
   voice_service.py        - Port 8001
   sms_service.py          - Port 8002
-  llm_service.py          - Port 8003
-  rag_service.py          - Port 8004
-  fraud_service.py        - Port 8005
-  db_service.py           - Port 8006
-  readquery_service.py    - Port 8007
-  writeops_service.py     - Port 8008
-  complaint_service.py    - Port 8009
-  qr_service.py           - Port 8010
-  handler_service.py      - Port 8011 (orchestrator)
-  dashboard_service.py    - Port 8012
+  call_service.py         - Port 8003
+  llm_service.py          - Port 8004
+  rag_service.py          - Port 8005
+  fraud_service.py        - Port 8006
+  db_service.py           - Port 8007
+  readquery_service.py    - Port 8008
+  writeops_service.py     - Port 8009
+  complaint_service.py    - Port 8010
+  qr_service.py           - Port 8011
+  handler_service.py      - Port 8012 (orchestrator)
+  dashboard_service.py    - Port 8013
 start_services.py    - Boot all 12 services
 demo_client.py       - HTTP client demo
 logs/                - Service logs (auto-generated)
