@@ -4,11 +4,13 @@ const path = require('path');
 const sdk = require('microsoft-cognitiveservices-speech-sdk');
 const axios = require('axios');
 const cors = require('cors');
+const expressWs = require('express-ws');
 
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
+expressWs(app); // Enable WebSocket support
 app.use(cors()); // Enable CORS for test page
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(__dirname)); // Serve static files including test.html
@@ -173,6 +175,12 @@ app.post('/transcribe', async (req, res) => {
   const startTime = Date.now();
   const { audio_bytes, format = 'wav' } = req.body;
   
+  // Validate input
+  if (!audio_bytes || typeof audio_bytes !== 'string') {
+    log('ERROR', 'Transcription request missing or invalid audio_bytes field');
+    return res.status(400).json({ error: 'Missing or invalid audio_bytes field' });
+  }
+  
   log('INFO', `Transcribing audio (${format} format)`);
   incrementCounter('transcriptions_total');
   
@@ -200,6 +208,12 @@ app.post('/transcribe', async (req, res) => {
 app.post('/synthesize', async (req, res) => {
   const startTime = Date.now();
   const { text } = req.body;
+  
+  // Validate input
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    log('ERROR', 'Synthesis request missing or invalid text field');
+    return res.status(400).json({ error: 'Missing or invalid text field' });
+  }
   
   log('INFO', `Synthesizing text: '${text.substring(0, 50)}...'`);
   incrementCounter('syntheses_total');
@@ -254,4 +268,115 @@ app.get('/metrics', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎤 Voice service (Node.js) listening on port ${PORT}`);
   log('INFO', `Voice service ready on port ${PORT}`);
+});
+
+// WebSocket endpoint for live transcription
+app.ws('/live-transcribe', (ws, req) => {
+  log('INFO', 'Live transcription WebSocket connected');
+  
+  const speechConfig = sdk.SpeechConfig.fromSubscription(SPEECH_KEY, SPEECH_REGION);
+  speechConfig.speechRecognitionLanguage = 'en-US';
+  
+  // Optimize for better real-time recognition
+  speechConfig.setProperty(sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, "800");
+  speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "5000");
+  speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "800");
+  
+  const pushStream = sdk.AudioInputStream.createPushStream(
+    sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1) // 16kHz PCM16 mono
+  );
+  
+  const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
+  const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+  
+  let isRecognizing = false;
+  
+  // Send partial results in real-time (live transcription)
+  recognizer.recognizing = (s, e) => {
+    if (e.result && e.result.text && e.result.text.trim().length > 0) {
+      isRecognizing = true;
+      ws.send(JSON.stringify({
+        type: 'partial',
+        text: e.result.text,
+        timestamp: Date.now()
+      }));
+      log('DEBUG', `Live partial: "${e.result.text.substring(0, 50)}..."`);
+    }
+  };
+  
+  // Send final recognized text
+  recognizer.recognized = (s, e) => {
+    if (e.result && e.result.reason === sdk.ResultReason.RecognizedSpeech) {
+      const finalText = e.result.text?.trim();
+      if (finalText) {
+        ws.send(JSON.stringify({
+          type: 'final',
+          text: finalText,
+          timestamp: Date.now()
+        }));
+        log('INFO', `Live final: "${finalText.substring(0, 50)}..."`);
+        incrementCounter('live_transcriptions_total');
+      }
+    }
+    isRecognizing = false;
+  };
+  
+  recognizer.canceled = (s, e) => {
+    log('ERROR', `Live transcription canceled: ${e.errorDetails}`);
+    ws.send(JSON.stringify({
+      type: 'error',
+      error: e.errorDetails
+    }));
+  };
+  
+  recognizer.sessionStopped = () => {
+    log('INFO', 'Live transcription session stopped');
+    ws.send(JSON.stringify({ type: 'stopped' }));
+  };
+  
+  // Start continuous recognition
+  recognizer.startContinuousRecognitionAsync(
+    () => {
+      log('INFO', 'Live transcription started');
+      ws.send(JSON.stringify({ type: 'started' }));
+    },
+    (err) => {
+      log('ERROR', `Failed to start live transcription: ${err}`);
+      ws.send(JSON.stringify({ type: 'error', error: err.toString() }));
+    }
+  );
+  
+  // Receive audio chunks from client
+  ws.on('message', (data) => {
+    try {
+      if (data instanceof Buffer) {
+        // Raw audio data (PCM16)
+        pushStream.write(data);
+      } else {
+        // JSON commands
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'stop') {
+          recognizer.stopContinuousRecognitionAsync();
+          pushStream.close();
+        }
+      }
+    } catch (err) {
+      log('ERROR', `WebSocket message error: ${err.message}`);
+    }
+  });
+  
+  ws.on('close', () => {
+    log('INFO', 'Live transcription WebSocket closed');
+    try {
+      recognizer.stopContinuousRecognitionAsync(() => {}, () => {});
+      pushStream.close();
+      recognizer.close();
+    } catch (err) {
+      log('ERROR', `Cleanup error: ${err.message}`);
+    }
+  });
+  
+  ws.on('error', (err) => {
+    log('ERROR', `WebSocket error: ${err.message}`);
+  });
 });

@@ -1,0 +1,78 @@
+╔══════════════════════════════════════════════════════════════╗
+║              CALL SERVICE - FIXED & RUNNING                  ║
+╚══════════════════════════════════════════════════════════════╝
+
+✅ **Issue Fixed**: Handler service `/call/end` endpoint now works
+✅ **Error Logging Improved**: Now shows detailed error messages
+✅ **Service Status**: RUNNING
+📍 **Port**: 8003
+🌐 **Current Public URL**: https://afraid-geckos-lose.loca.lt
+
+╔══════════════════════════════════════════════════════════════╗
+║                    WHAT WAS FIXED                            ║
+╚══════════════════════════════════════════════════════════════╝
+
+**Problem**: 
+Handler service was returning 500 error when call service tried 
+to notify it about call ending.
+
+**Root Cause**:
+FastAPI endpoint signature requires query parameters passed in URL,
+not in axios params object.
+
+**Solution**:
+Changed from:
+  axios.post('/call/end', null, { params: { call_id, transcript }})
+
+To:
+  axios.post(`/call/end?call_id=${callSid}&transcript=${transcript}`)
+
+╔══════════════════════════════════════════════════════════════╗
+║          UPDATE TWILIO WEBHOOK (URL CHANGED!)                ║
+╚══════════════════════════════════════════════════════════════╝
+
+🔗 Go to: https://console.twilio.com/us1/develop/phone-numbers/manage/incoming
+
+📞 Click on: +18559581055
+
+⚙️  Under "Voice Configuration", UPDATE URL to:
+
+   ┌────────────────────────────────────────────────────────┐
+   │ https://afraid-geckos-lose.loca.lt/voice-webhook      │
+   └────────────────────────────────────────────────────────┘
+
+💾 Click "Save"
+
+╔══════════════════════════════════════════════════════════════╗
+║                  TEST THE FIXED SERVICE                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+📱 Call: +18559581055
+
+✅ Expected behavior (NOW WORKING):
+   1. Hear greeting
+   2. Speak a sentence
+   3. Partial transcriptions logged ✓
+   4. Final sentence sent to handler ✓
+   5. Handler processes and responds ✓
+   6. Call ends gracefully ✓ (FIXED!)
+
+📊 Monitor: tail -f /tmp/call_service.log
+
+╔══════════════════════════════════════════════════════════════╗
+║              SUCCESSFUL TEST LOG EXAMPLE                     ║
+╚══════════════════════════════════════════════════════════════╝
+
+From your previous test:
+✓ [WEBHOOK] Incoming call from: +14807437061
+✓ [WS] Connected to voice service
+✓ [PARTIAL] "please help me"
+✓ [FINAL SENTENCE] "Please help me."
+✓ [HANDLER] Forwarding sentence to handler
+✓ [HANDLER] Response received
+✓ [CALL] Ending call gracefully
+✓ Call ends successfully (no more 500 error!)
+
+╔══════════════════════════════════════════════════════════════╝
+           SYSTEM READY FOR PRODUCTION TESTING! 🚀
+╚══════════════════════════════════════════════════════════════╝

@@ -5,6 +5,7 @@ import time
 import sys
 import os
 import signal
+import requests
 from pathlib import Path
 
 # Add project root to Python path
@@ -126,7 +127,6 @@ def shutdown_services(signum=None, frame=None):
 
 def check_health():
     """Check if services are responding."""
-    import requests
     time.sleep(4)  # Wait longer for services to start
     
     print("\n🔍 Health check...")
@@ -146,6 +146,51 @@ def check_health():
     return healthy == len(processes)
 
 
+def update_twilio_webhook():
+    """Update Twilio webhook URL after call service starts."""
+    print("\n🔄 Updating Twilio webhook...")
+    
+    # Wait for call service to establish LocalTunnel
+    time.sleep(5)
+    
+    try:
+        # Get the public URL from call service
+        resp = requests.get("http://localhost:8003/public-url", timeout=5)
+        if resp.status_code == 200:
+            webhook_url = resp.json().get('url')
+            if webhook_url:
+                webhook_url = f"{webhook_url}/voice-webhook"
+                print(f"📞 Webhook URL: {webhook_url}")
+                
+                # Run the webhook update script
+                script_path = project_root / "services" / "call" / "scripts" / "change_webhook.py"
+                result = subprocess.run(
+                    [sys.executable, str(script_path), "--url", webhook_url],
+                    cwd=str(script_path.parent),
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                if result.returncode == 0:
+                    print("✅ Twilio webhook updated successfully!")
+                    print(f"\n{'='*60}")
+                    print("🎉 APPLICATION READY TO RECEIVE CALLS!")
+                    print(f"{'='*60}")
+                    print(f"📱 Call: +18559581055")
+                    print(f"🌐 Webhook: {webhook_url}")
+                    print(f"{'='*60}\n")
+                else:
+                    print(f"⚠️  Webhook update failed: {result.stderr}")
+            else:
+                print("⚠️  Could not get public URL from call service")
+        else:
+            print("⚠️  Call service not responding")
+    except Exception as e:
+        print(f"⚠️  Failed to update webhook: {e}")
+        print("You may need to manually update the Twilio webhook URL")
+
+
 if __name__ == "__main__":
     # Register signal handlers
     signal.signal(signal.SIGINT, shutdown_services)
@@ -158,6 +203,9 @@ if __name__ == "__main__":
             print("\n✅ All services are healthy and ready!")
         else:
             print("\n⚠️  Some services failed health check")
+        
+        # Update Twilio webhook for call service
+        update_twilio_webhook()
         
         # Keep running
         print("\nServices running... (Ctrl+C to stop)")

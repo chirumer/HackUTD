@@ -57,7 +57,8 @@ async def collect_all_metrics():
     data = {
         "timestamp": asyncio.get_event_loop().time(),
         "services": {},
-        "logs": []
+        "logs": [],
+        "call_metrics": {}
     }
     
     for service_name, port in SERVICE_PORTS.items():
@@ -73,6 +74,10 @@ async def collect_all_metrics():
             try:
                 metrics_resp = requests.get(f"http://localhost:{port}/metrics", timeout=1)
                 metrics = metrics_resp.json() if metrics_resp.status_code == 200 else {}
+                
+                # Special handling for call service metrics
+                if service_name == "call" and metrics:
+                    data["call_metrics"] = metrics
             except:
                 metrics = {}
             
@@ -83,6 +88,18 @@ async def collect_all_metrics():
                 data["logs"].extend(logs)
             except:
                 pass
+            
+            # Get active calls for call service
+            if service_name == "call":
+                try:
+                    active_resp = requests.get(f"http://localhost:{port}/active", timeout=1)
+                    if active_resp.status_code == 200:
+                        active_calls = active_resp.json()
+                        if "call_metrics" not in data:
+                            data["call_metrics"] = {}
+                        data["call_metrics"]["active_calls_list"] = active_calls
+                except:
+                    pass
             
             data["services"][service_name] = {
                 "status": health.get("status", "unknown"),
@@ -536,7 +553,51 @@ HTML_TEMPLATE = """
         </div>
         
         <div class="card">
-            <h2>📈 System Metrics</h2>
+            <h2>� Call Service Metrics</h2>
+            <div class="metrics-grid" id="callMetrics">
+                <div class="metric-box">
+                    <div class="metric-label">Total Calls</div>
+                    <div class="metric-value" id="totalCalls">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Answered</div>
+                    <div class="metric-value" id="answeredCalls">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Completed</div>
+                    <div class="metric-value" id="completedCalls">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Active Now</div>
+                    <div class="metric-value" id="activeCalls">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">User Hangups</div>
+                    <div class="metric-value" id="userHangups">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">System Hangups</div>
+                    <div class="metric-value" id="systemHangups">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Avg Duration</div>
+                    <div class="metric-value" id="avgDuration">0s</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-label">Success Rate</div>
+                    <div class="metric-value" id="successRate">0%</div>
+                </div>
+            </div>
+            <div style="margin-top: 20px; padding: 15px; background: #0d1117; border-radius: 8px; border: 1px solid #30363d;">
+                <h3 style="color: #58a6ff; margin-bottom: 10px; font-size: 14px;">📋 Active Calls</h3>
+                <div id="activeCallsList" style="max-height: 200px; overflow-y: auto;">
+                    <em style="color: #8b949e;">No active calls</em>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>�📈 System Metrics</h2>
             <div class="metrics-grid" id="systemMetrics"></div>
         </div>
     </div>
@@ -724,7 +785,7 @@ HTML_TEMPLATE = """
                 voiceWs.onerror = (error) => {
                     console.error('Voice WebSocket error:', error);
                     document.getElementById('transcriptOutput').innerHTML = 
-                        '<span style="color: #da3633;">❌ Failed to connect to voice service. Make sure it\'s running on port 8001.</span>';
+                        '<span style="color: #da3633;">❌ Failed to connect to voice service. Make sure it is running on port 8001.</span>';
                     stopRecording();
                 };
                 
@@ -939,11 +1000,60 @@ HTML_TEMPLATE = """
             }).join('');
             document.getElementById('servicesContainer').innerHTML = servicesHtml;
             
+            // Update call metrics
+            updateCallMetrics(data.call_metrics || {});
+            
             // Update system metrics
             updateSystemMetrics(data);
             
             // Update logs
             updateLogs(data.logs || []);
+        }
+        
+        function updateCallMetrics(metrics) {
+            if (Object.keys(metrics).length === 0) {
+                // No metrics available
+                document.getElementById('totalCalls').textContent = '-';
+                document.getElementById('answeredCalls').textContent = '-';
+                document.getElementById('completedCalls').textContent = '-';
+                document.getElementById('activeCalls').textContent = '-';
+                document.getElementById('userHangups').textContent = '-';
+                document.getElementById('systemHangups').textContent = '-';
+                document.getElementById('avgDuration').textContent = '-';
+                document.getElementById('successRate').textContent = '-';
+                return;
+            }
+            
+            // Update call metric values
+            document.getElementById('totalCalls').textContent = metrics.totalCalls || 0;
+            document.getElementById('answeredCalls').textContent = metrics.answeredCalls || 0;
+            document.getElementById('completedCalls').textContent = metrics.completedCalls || 0;
+            document.getElementById('activeCalls').textContent = metrics.activeCalls || 0;
+            document.getElementById('userHangups').textContent = metrics.userHangups || 0;
+            document.getElementById('systemHangups').textContent = metrics.systemHangups || 0;
+            document.getElementById('avgDuration').textContent = metrics.averageDuration || '0s';
+            document.getElementById('successRate').textContent = metrics.successRate || '0%';
+            
+            // Update active calls list
+            const activeCallsList = document.getElementById('activeCallsList');
+            if (metrics.active_calls_list && metrics.active_calls_list.length > 0) {
+                const callsHtml = metrics.active_calls_list.map(call => {
+                    const startTime = new Date(call.started_at * 1000).toLocaleTimeString();
+                    const duration = Math.floor((Date.now() / 1000) - call.started_at);
+                    return `
+                        <div style="padding: 8px; margin: 4px 0; background: #161b22; border-radius: 4px; border-left: 3px solid #58a6ff;">
+                            <div style="font-weight: bold; color: #c9d1d9;">📞 ${escapeHtml(call.phone)}</div>
+                            <div style="font-size: 12px; color: #8b949e; margin-top: 4px;">
+                                Started: ${startTime} | Duration: ${duration}s
+                            </div>
+                            ${call.transcript ? `<div style="font-size: 12px; color: #c9d1d9; margin-top: 4px; font-style: italic;">"${escapeHtml(call.transcript)}"</div>` : ''}
+                        </div>
+                    `;
+                }).join('');
+                activeCallsList.innerHTML = callsHtml;
+            } else {
+                activeCallsList.innerHTML = '<em style="color: #8b949e;">No active calls</em>';
+            }
         }
         
         function updateSystemMetrics(data) {

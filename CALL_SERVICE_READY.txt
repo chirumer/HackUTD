@@ -1,0 +1,100 @@
+╔══════════════════════════════════════════════════════════════╗
+║                   CALL SERVICE - READY TO TEST               ║
+╚══════════════════════════════════════════════════════════════╝
+
+✅ Service Status: RUNNING
+📍 Local Port: 8003
+🌐 Public URL: https://fluffy-showers-call.loca.lt
+
+╔══════════════════════════════════════════════════════════════╗
+║              CONFIGURE TWILIO WEBHOOK NOW                    ║
+╚══════════════════════════════════════════════════════════════╝
+
+🔗 Go to: https://console.twilio.com/us1/develop/phone-numbers/manage/incoming
+
+📞 Click on: +18559581055
+
+⚙️  Under "Voice Configuration", set:
+   
+   ┌────────────────────────────────────────────────────────┐
+   │ A CALL COMES IN:  Webhook                              │
+   │                                                         │
+   │ URL: https://fluffy-showers-call.loca.lt/voice-webhook │
+   │                                                         │
+   │ HTTP Method: POST                                       │
+   └────────────────────────────────────────────────────────┘
+
+💾 Click "Save" at the bottom
+
+╔══════════════════════════════════════════════════════════════╗
+║                      TEST THE SERVICE                        ║
+╚══════════════════════════════════════════════════════════════╝
+
+📱 Call: +18559581055
+
+🎤 You will hear: 
+   "Welcome to Bank Assist. Please tell us how we can help you today."
+
+💬 Say something like:
+   - "What is my account balance?"
+   - "Show me my recent transactions"
+   - "Transfer 50 dollars to Bob"
+
+🔍 Watch the terminal for:
+   ✓ [WEBHOOK] Incoming call notification
+   ✓ [PARTIAL] Real-time transcription fragments
+   ✓ [FINAL SENTENCE] Complete sentence detected
+   ✓ [HANDLER] Forwarding to handler service
+   ✓ [CALL] Call ended successfully
+
+╔══════════════════════════════════════════════════════════════╗
+║                   DEPENDENCIES STATUS                        ║
+╚══════════════════════════════════════════════════════════════╝
+
+✅ Voice Service (port 8001)    - Running
+✅ Handler Service (port 8012)  - Running
+✅ Call Service (port 8003)     - Running
+✅ LocalTunnel                  - Connected
+
+╔══════════════════════════════════════════════════════════════╗
+║                    IMPORTANT NOTES                           ║
+╚══════════════════════════════════════════════════════════════╝
+
+⚠️  The LocalTunnel URL changes on each restart!
+    Current URL: https://fluffy-showers-call.loca.lt
+    You must update Twilio whenever you restart the service.
+
+⏱️  The call ends automatically after ONE complete sentence.
+    This is intentional for testing the flow.
+
+📊 To monitor in real-time:
+    Watch the terminal where call service is running
+
+🔧 Quick Health Check:
+    curl http://localhost:8003/health
+
+╔══════════════════════════════════════════════════════════════╗
+║                   TROUBLESHOOTING                            ║
+╚══════════════════════════════════════════════════════════════╝
+
+Problem: Call doesn't connect
+→ Verify Twilio webhook URL matches: 
+  https://fluffy-showers-call.loca.lt/voice-webhook
+
+Problem: No transcription
+→ Check voice service: curl http://localhost:8001/health
+→ Review call service logs for connection errors
+
+Problem: Handler not responding  
+→ Check handler service: curl http://localhost:8012/health
+→ Verify HANDLER_URL in /services/call/.env
+
+╔══════════════════════════════════════════════════════════════╗
+║                     READY TO TEST!                           ║
+╚══════════════════════════════════════════════════════════════╝
+
+1. ✅ Configure Twilio webhook (see above)
+2. 📞 Call +18559581055
+3. 🎤 Speak your request
+4. 👀 Watch the magic happen!
+
