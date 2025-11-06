@@ -1,6 +1,7 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const path = require('path');
+const { AzureOpenAI } = require('openai');
 
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -10,6 +11,17 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 8004;
 const SERVICE_NAME = process.env.SERVICE_NAME || 'llm';
+
+// Azure OpenAI Configuration
+const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY;
+const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT;
+const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT;
+const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-12-01-preview';
+
+if (!AZURE_OPENAI_API_KEY || !AZURE_OPENAI_ENDPOINT || !AZURE_OPENAI_DEPLOYMENT) {
+  console.error('ERROR: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT must be set in .env');
+  process.exit(1);
+}
 
 // In-memory log buffer for dashboard
 const logBuffer = [];
@@ -65,24 +77,50 @@ function recordTiming(name, duration) {
   }
 }
 
-// Simulated LLM Service
-class OpenAIService {
-  generateAnswer(question) {
-    const simulations = [
-      "Based on our records, I can help you with that. Let me pull up the relevant information.",
-      "That's a great question. Here's what I found in our database.",
-      "I understand your concern. Let me provide you with the most current information.",
-      "According to our policies, here's how we handle that situation.",
-      "I've analyzed your request and here's my recommendation."
+// Azure OpenAI Service
+class AzureOpenAIService {
+  constructor() {
+    this.client = new AzureOpenAI({
+      apiKey: AZURE_OPENAI_API_KEY,
+      endpoint: AZURE_OPENAI_ENDPOINT,
+      apiVersion: AZURE_OPENAI_API_VERSION,
+      deployment: AZURE_OPENAI_DEPLOYMENT
+    });
+    this.deployment = AZURE_OPENAI_DEPLOYMENT;
+  }
+
+  async generateAnswer(question, context = {}) {
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are a helpful banking assistant. Provide clear, concise answers to customer questions about their accounts and banking services.'
+      },
+      {
+        role: 'user',
+        content: question
+      }
     ];
-    
-    return simulations[Math.floor(Math.random() * simulations.length)];
+
+    // Add context if provided
+    if (context && Object.keys(context).length > 0) {
+      messages[0].content += `\n\nContext: ${JSON.stringify(context)}`;
+    }
+
+    const result = await this.client.chat.completions.create({
+      model: this.deployment,
+      messages: messages,
+      max_tokens: 150,
+      temperature: 0.7,
+    });
+
+    return result.choices[0].message.content;
   }
 }
 
-const llmService = new OpenAIService();
+const llmService = new AzureOpenAIService();
 
-log('INFO', `LLM service starting up on port ${PORT}`);
+log('INFO', `LLM service starting up on port ${PORT} with Azure OpenAI`);
+log('INFO', `Using deployment: ${AZURE_OPENAI_DEPLOYMENT}`);
 
 // Health endpoint
 app.get('/health', (req, res) => {
@@ -90,7 +128,7 @@ app.get('/health', (req, res) => {
 });
 
 // Answer endpoint
-app.post('/answer', (req, res) => {
+app.post('/answer', async (req, res) => {
   const startTime = Date.now();
   const { question, context = {} } = req.body;
   
@@ -98,8 +136,8 @@ app.post('/answer', (req, res) => {
   incrementCounter('questions_total');
   
   try {
-    // Generate answer using LLM
-    const answer = llmService.generateAnswer(question);
+    // Generate answer using Azure OpenAI
+    const answer = await llmService.generateAnswer(question, context);
     
     const elapsed = (Date.now() - startTime) / 1000;
     recordTiming('answer_duration', elapsed);

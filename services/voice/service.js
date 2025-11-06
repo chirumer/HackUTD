@@ -1,15 +1,28 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const path = require('path');
+const sdk = require('microsoft-cognitiveservices-speech-sdk');
+const axios = require('axios');
+const cors = require('cors');
 
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
-app.use(express.json());
+app.use(cors()); // Enable CORS for test page
+app.use(express.json({ limit: '50mb' }));
+app.use(express.static(__dirname)); // Serve static files including test.html
 
 const PORT = process.env.PORT || 8001;
 const SERVICE_NAME = process.env.SERVICE_NAME || 'voice';
+const SPEECH_KEY = process.env.AZ_SPEECH_KEY;
+const SPEECH_REGION = process.env.AZ_SPEECH_REGION;
+const VOICE_NAME = process.env.AZ_VOICE_NAME || 'en-US-JennyNeural';
+
+if (!SPEECH_KEY || !SPEECH_REGION) {
+  console.error('ERROR: AZ_SPEECH_KEY and AZ_SPEECH_REGION must be set in .env');
+  process.exit(1);
+}
 
 // In-memory log buffer for dashboard
 const logBuffer = [];
@@ -65,32 +78,90 @@ function recordTiming(name, duration) {
   }
 }
 
-// Simulated Azure Voice Service
+// Azure Voice Service using REST API
 class AzureVoiceService {
-  transcribe(audioData) {
-    // Simulate transcription
-    const transcripts = [
-      "Hello, can you help me?",
-      "What's my balance?",
-      "Transfer 50 to Bob",
-      "Show me my last transactions"
-    ];
-    return transcripts[Math.floor(Math.random() * transcripts.length)];
+  constructor() {
+    this.speechConfig = sdk.SpeechConfig.fromSubscription(SPEECH_KEY, SPEECH_REGION);
+    this.speechConfig.speechRecognitionLanguage = 'en-US';
+    this.speechConfig.speechSynthesisVoiceName = VOICE_NAME;
   }
-  
-  synthesize(text) {
-    // Simulate audio generation
-    const fakeAudio = Buffer.from(`SIMULATED_AUDIO_FOR: ${text}`);
-    return {
-      content: fakeAudio,
-      format: 'wav'
-    };
+
+  async transcribe(audioBuffer) {
+    return new Promise((resolve, reject) => {
+      const pushStream = sdk.AudioInputStream.createPushStream();
+      pushStream.write(audioBuffer);
+      pushStream.close();
+
+      const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
+      const recognizer = new sdk.SpeechRecognizer(this.speechConfig, audioConfig);
+
+      let transcript = '';
+
+      recognizer.recognized = (s, e) => {
+        if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
+          transcript += e.result.text + ' ';
+        }
+      };
+
+      recognizer.sessionStopped = () => {
+        recognizer.close();
+        resolve(transcript.trim() || 'Could not transcribe audio');
+      };
+
+      recognizer.canceled = (s, e) => {
+        recognizer.close();
+        if (e.reason === sdk.CancellationReason.Error) {
+          reject(new Error(`Transcription error: ${e.errorDetails}`));
+        } else {
+          resolve(transcript.trim() || 'Could not transcribe audio');
+        }
+      };
+
+      recognizer.startContinuousRecognitionAsync(
+        () => {
+          setTimeout(() => {
+            recognizer.stopContinuousRecognitionAsync();
+          }, 5000); // Stop after 5 seconds
+        },
+        (err) => {
+          recognizer.close();
+          reject(new Error(`Failed to start recognition: ${err}`));
+        }
+      );
+    });
+  }
+
+  async synthesize(text) {
+    return new Promise((resolve, reject) => {
+      const synthesizer = new sdk.SpeechSynthesizer(this.speechConfig);
+      
+      synthesizer.speakTextAsync(
+        text,
+        (result) => {
+          if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+            synthesizer.close();
+            resolve({
+              content: Buffer.from(result.audioData),
+              format: 'wav'
+            });
+          } else {
+            synthesizer.close();
+            reject(new Error(`Speech synthesis failed: ${result.errorDetails}`));
+          }
+        },
+        (error) => {
+          synthesizer.close();
+          reject(new Error(`Speech synthesis error: ${error}`));
+        }
+      );
+    });
   }
 }
 
 const voiceService = new AzureVoiceService();
 
-log('INFO', `Voice service starting up on port ${PORT}`);
+log('INFO', `Voice service starting up on port ${PORT} with Azure Speech`);
+log('INFO', `Using voice: ${VOICE_NAME}, region: ${SPEECH_REGION}`);
 
 // Health endpoint
 app.get('/health', (req, res) => {
@@ -98,7 +169,7 @@ app.get('/health', (req, res) => {
 });
 
 // Transcribe endpoint (STT)
-app.post('/transcribe', (req, res) => {
+app.post('/transcribe', async (req, res) => {
   const startTime = Date.now();
   const { audio_bytes, format = 'wav' } = req.body;
   
@@ -110,8 +181,8 @@ app.post('/transcribe', (req, res) => {
     const audioBuffer = Buffer.from(audio_bytes, 'base64');
     log('DEBUG', `Decoded ${audioBuffer.length} bytes of audio`);
     
-    // Perform transcription
-    const transcript = voiceService.transcribe(audioBuffer);
+    // Perform transcription using Azure Speech SDK
+    const transcript = await voiceService.transcribe(audioBuffer);
     
     const elapsed = (Date.now() - startTime) / 1000;
     recordTiming('transcription_duration', elapsed);
@@ -126,7 +197,7 @@ app.post('/transcribe', (req, res) => {
 });
 
 // Synthesize endpoint (TTS)
-app.post('/synthesize', (req, res) => {
+app.post('/synthesize', async (req, res) => {
   const startTime = Date.now();
   const { text } = req.body;
   
@@ -134,8 +205,8 @@ app.post('/synthesize', (req, res) => {
   incrementCounter('syntheses_total');
   
   try {
-    // Perform synthesis
-    const audio = voiceService.synthesize(text);
+    // Perform synthesis using Azure Speech SDK
+    const audio = await voiceService.synthesize(text);
     const audioB64 = audio.content.toString('base64');
     
     const elapsed = (Date.now() - startTime) / 1000;
