@@ -412,7 +412,7 @@ async def call_stream_endpoint(websocket: WebSocket):
                 # Get response from LLM service with full context
                 llm_response = requests.post(
                     f"{LLM_URL}/answer",
-                    json={"question": user_text, "conversation_history": conversation_context},
+                    json={"question": user_text, "conversation_history": conversation_context[:-1]}, # Exclude current user message
                     timeout=15
                 )
                 llm_response.raise_for_status()

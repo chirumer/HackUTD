@@ -89,28 +89,56 @@ class AzureOpenAIService {
     this.deployment = AZURE_OPENAI_DEPLOYMENT;
   }
 
-  async generateAnswer(question, context = {}) {
+  async generateAnswer(question, context = {}, conversationHistory = []) {
     const messages = [
       {
         role: 'system',
         content: 'You are a helpful banking assistant. Provide clear, concise answers to customer questions about their accounts and banking services.'
-      },
-      {
-        role: 'user',
-        content: question
       }
     ];
 
-    // Add context if provided
+    // Add context to system message if provided
     if (context && Object.keys(context).length > 0) {
       messages[0].content += `\n\nContext: ${JSON.stringify(context)}`;
     }
 
-    const result = await this.client.chat.completions.create({
+    // Add conversation history if provided
+    if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+      // Add all messages from conversation history
+      messages.push(...conversationHistory);
+    } else {
+      // No history, just add the current question as a user message
+      messages.push({
+        role: 'user',
+        content: question
+      });
+    }
+
+    // Prepare request parameters
+    const requestParams = {
       model: this.deployment,
       messages: messages,
       max_tokens: 150,
       temperature: 0.7,
+    };
+
+    // Log the full request
+    log('INFO', '🔵 AZURE OPENAI API REQUEST', {
+      request: JSON.stringify(requestParams, null, 2)
+    });
+
+    const result = await this.client.chat.completions.create(requestParams);
+
+    // Log the full response
+    log('INFO', '🟢 AZURE OPENAI API RESPONSE', {
+      response: JSON.stringify({
+        id: result.id,
+        model: result.model,
+        created: result.created,
+        choices: result.choices,
+        usage: result.usage,
+        system_fingerprint: result.system_fingerprint
+      }, null, 2)
     });
 
     return result.choices[0].message.content;
@@ -130,7 +158,21 @@ app.get('/health', (req, res) => {
 // Answer endpoint
 app.post('/answer', async (req, res) => {
   const startTime = Date.now();
-  const { question, context = {} } = req.body;
+  const { question, context = {}, conversation_history = [] } = req.body;
+  
+  // Log what we received
+  log('INFO', '=== LLM REQUEST RECEIVED ===');
+  log('INFO', `Question: "${question}"`);
+  log('INFO', `Conversation history length: ${conversation_history ? conversation_history.length : 0}`);
+  if (conversation_history && conversation_history.length > 0) {
+    log('INFO', 'Conversation history:');
+    conversation_history.forEach((msg, idx) => {
+      log('INFO', `  [${idx}] ${msg.role}: "${msg.content}"`);
+    });
+  } else {
+    log('INFO', 'No conversation history provided');
+  }
+  log('INFO', '============================');
   
   // Validate question
   if (!question || typeof question !== 'string' || question.trim().length === 0) {
@@ -142,8 +184,8 @@ app.post('/answer', async (req, res) => {
   incrementCounter('questions_total');
   
   try {
-    // Generate answer using Azure OpenAI
-    const answer = await llmService.generateAnswer(question, context);
+    // Generate answer using Azure OpenAI with conversation history
+    const answer = await llmService.generateAnswer(question, context, conversation_history);
     
     const elapsed = (Date.now() - startTime) / 1000;
     recordTiming('answer_duration', elapsed);
